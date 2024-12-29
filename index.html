@@ -175,21 +175,435 @@
     <!-- Include Quill library from CDN -->
     <script src="https://cdn.quilljs.com/1.3.6/quill.js"></script>
 
-    <!-- Main Application Script -->
+<!-- Main Application Script -->
     <script>
-
     /**
      * BitQuill Application
-     * A secure rich text editor with blockchain-like integrity and OpenTimestamps integration
-     * 
-     * Features:
-     * - Rich text editing using Quill
-     * - Hash chain for document integrity
-     * - Proof of Work for each edit
-     * - Asynchronous OpenTimestamps integration
-     * - Document serialization and deserialization
-     * - Document verification
+     * A secure rich text editor with Merkle tree integrity and edit pattern analysis
      */
+
+    class EditAnalyzer {
+        constructor() {
+            this.editHistory = [];
+            
+            this.thresholds = {
+                // Basic human typing parameters
+                baseTypingInterval: 100,      // Baseline IKI (inter-key interval) in ms
+                thinkingTime: 500,            // Average pause for thinking in ms
+                wordBoundaryPause: 200,       // Natural pause between words in ms
+                
+                // Pattern detection
+                fastBurstThreshold: 80,       // Fastest acceptable typing interval in ms
+                burstVariance: 20,            // Expected variance in typing speed
+                consistentPatternWindow: 10,   // Number of keystrokes to check for patterns
+                maxConsistentCount: 5,        // Maximum allowable identical intervals
+                
+                // Text characteristics
+                maxWordLength: 15,            // Longest typical English word
+                commonWordLengths: [3, 4, 5], // Most common English word lengths
+                typicalLineLength: 80,        // Average characters per line
+                
+                // Statistics tracking
+                windowSize: 50,               // Rolling window for analysis
+                minSampleSize: 5              // Minimum samples for pattern detection
+            };
+            
+            this.intervalHistory = [];        // Store timing between edits
+            this.patternBuffer = [];          // Recent typing patterns
+            this.lastWordBoundary = 0;        // Track word breaks
+        }
+
+        recordEdit(content, prevContent, timestamp) {
+            const timeSinceLastEdit = this.editHistory.length > 0 ? 
+                timestamp - this.editHistory[this.editHistory.length - 1].timestamp : null;
+
+            const metrics = {
+                timestamp,
+                content,
+                length: content.length,
+                changeSize: prevContent ? Math.abs(content.length - prevContent.length) : content.length,
+                timeSinceLastEdit
+            };
+
+            // Analyze the typing pattern
+            if (timeSinceLastEdit !== null) {
+                const isNaturalTyping = this.analyzeTypingPattern(timeSinceLastEdit);
+                if (!isNaturalTyping) {
+                    return {
+                        isValid: false,
+                        patterns: ['Unnatural typing pattern detected']
+                    };
+                }
+            }
+
+            this.editHistory.push(metrics);
+            return this.analyzeEdit(metrics);
+        }
+
+        analyzeTypingPattern(newInterval) {
+            // Store interval
+            this.intervalHistory.push(newInterval);
+            if (this.intervalHistory.length > this.thresholds.windowSize) {
+                this.intervalHistory.shift();
+            }
+
+            // Calculate geometric mean of recent intervals
+            const recentIntervals = this.intervalHistory.slice(-this.thresholds.minSampleSize);
+            if (recentIntervals.length < this.thresholds.minSampleSize) return true;
+
+            const logSum = recentIntervals.reduce((sum, interval) => {
+                return sum + Math.log(Math.max(interval, 1));
+            }, 0);
+            const geometricMean = Math.exp(logSum / recentIntervals.length);
+
+            // Check for inhuman patterns
+            const tooFast = geometricMean < this.thresholds.fastBurstThreshold;
+            const tooConsistent = this.checkConsistency(recentIntervals);
+            const noNaturalPauses = this.checkPausePattern();
+
+            return !tooFast && !tooConsistent && !noNaturalPauses;
+        }
+        checkConsistency(intervals) {
+            let consistentCount = 1;
+            const variance = this.thresholds.burstVariance;
+            
+            for (let i = 1; i < intervals.length; i++) {
+                if (Math.abs(intervals[i] - intervals[i-1]) < variance) {
+                    consistentCount++;
+                    if (consistentCount > this.thresholds.maxConsistentCount) {
+                        return true;
+                    }
+                } else {
+                    consistentCount = 1;
+                }
+            }
+            return false;
+        }
+
+        checkPausePattern() {
+            const recentTotal = this.intervalHistory.slice(-this.thresholds.windowSize)
+                .reduce((sum, interval) => sum + interval, 0);
+            
+            if (recentTotal === 0) return false;
+
+            const pauseCount = this.intervalHistory.slice(-this.thresholds.windowSize)
+                .filter(interval => interval > this.thresholds.wordBoundaryPause)
+                .length;
+
+            // Should have natural pauses every few characters
+            return pauseCount < (this.thresholds.windowSize / this.thresholds.maxWordLength);
+        }
+
+        analyzeEdit(metrics) {
+            const suspiciousPatterns = [];
+
+            // Check for paste operations or bulk edits
+            if (metrics.changeSize > this.thresholds.maxWordLength) {
+                suspiciousPatterns.push('Large content change detected');
+            }
+
+            // Check if content changed without proper typing interval
+            if (metrics.changeSize > 1 && metrics.timeSinceLastEdit < this.thresholds.baseTypingInterval) {
+                suspiciousPatterns.push('Content changed too quickly');
+            }
+
+            return {
+                isValid: suspiciousPatterns.length === 0,
+                patterns: suspiciousPatterns
+            };
+        }
+
+        getEditStats() {
+            if (this.editHistory.length === 0) return null;
+
+            const totalEdits = this.editHistory.length;
+            const totalTime = this.editHistory[totalEdits - 1].timestamp - this.editHistory[0].timestamp;
+            const totalChars = this.editHistory.reduce((sum, edit) => sum + edit.changeSize, 0);
+            
+            // Calculate geometric mean of intervals
+            const intervals = this.intervalHistory.filter(interval => interval > 0);
+            const geometricMean = intervals.length > 0 ? 
+                Math.exp(intervals.reduce((sum, interval) => sum + Math.log(interval), 0) / intervals.length) : 
+                null;
+
+            return {
+                totalEdits,
+                averageInterval: totalEdits > 1 ? totalTime / (totalEdits - 1) : null,
+                geometricMeanInterval: geometricMean,
+                charsPerMinute: totalTime > 0 ? (totalChars / totalTime) * 60000 : 0,
+                totalChars
+            };
+        }
+    }
+
+    class MerkleNode {
+        constructor(hash, content, metadata = null, left = null, right = null) {
+            this.hash = hash;
+            this.content = content;    // Store actual content in leaf nodes
+            this.metadata = metadata;  // Stores timestamp, PoW results, edit stats
+            this.left = left;
+            this.right = right;
+        }
+    }
+
+    class EnhancedMerkleTree {
+        constructor() {
+            this.leaves = [];
+            this.root = null;
+            this.pendingTimestamps = new Map();
+        }
+
+        async addLeaf(content, metadata) {
+            const contentHash = await this.computeHash(content);
+            const leaf = new MerkleNode(contentHash, content, metadata);
+            this.leaves.push(leaf);
+            await this.rebuildTree();
+            
+            const proof = await this.getProof(this.leaves.length - 1);
+            
+            if (this.leaves.length % 100 === 0) {
+                this.createOpenTimestamp(this.root.hash).then(timestamp => {
+                    this.pendingTimestamps.set(this.root.hash, timestamp);
+                });
+            }
+            
+            return {
+                leaf: leaf,
+                proof: proof,
+                rootHash: this.root.hash
+            };
+        }
+
+        async rebuildTree() {
+            if (this.leaves.length === 0) {
+                this.root = null;
+                return;
+            }
+
+            let nodes = [...this.leaves];
+            let level = 0;
+
+            while (nodes.length > 1) {
+                const nextLevel = [];
+                for (let i = 0; i < nodes.length; i += 2) {
+                    const left = nodes[i];
+                    const right = i + 1 < nodes.length ? nodes[i + 1] : left;
+                    
+                    // Await the hash computation
+                    const combinedHash = await this.computeHash(left.hash + right.hash);
+                    
+                    nextLevel.push(new MerkleNode(
+                        combinedHash,
+                        null,
+                        { 
+                            timestamp: Date.now(),
+                            level,
+                            leftHash: left.hash,
+                            rightHash: right.hash
+                        },
+                        left,
+                        right
+                    ));
+                }
+                nodes = nextLevel;
+                level++;
+            }
+
+            this.root = nodes[0];
+            console.log('Tree rebuilt. Root hash:', this.root.hash);
+        }
+    
+
+    async getProof(index) {
+        if (!this.root || index >= this.leaves.length) {
+            return null;
+        }
+
+        const proof = [];
+        let currentIndex = index;
+        let currentLevel = [...this.leaves];
+
+        while (currentLevel.length > 1) {
+            const isOdd = currentIndex % 2 === 1;
+            const pairIndex = isOdd ? currentIndex - 1 : currentIndex + 1;
+            
+            // Add sibling to proof if it exists
+            if (pairIndex < currentLevel.length) {
+                proof.push({
+                    hash: currentLevel[pairIndex].hash,
+                    position: isOdd ? 'left' : 'right'
+                });
+            } else if (currentIndex % 2 === 0) {
+                // If we're at a right edge, use self as the pair
+                proof.push({
+                    hash: currentLevel[currentIndex].hash,
+                    position: 'right'
+                });
+            }
+
+            // Build next level
+            const nextLevel = [];
+            for (let i = 0; i < currentLevel.length; i += 2) {
+                const leftNode = currentLevel[i];
+                const rightNode = i + 1 < currentLevel.length ? currentLevel[i + 1] : leftNode;
+                
+                const combinedHash = await this.computeHash(leftNode.hash + rightNode.hash);
+                
+                nextLevel.push(new MerkleNode(
+                    combinedHash,
+                    null,
+                    {
+                        level: Math.floor(currentLevel.length / 2),
+                        leftHash: leftNode.hash,
+                        rightHash: rightNode.hash
+                    },
+                    leftNode,
+                    rightNode
+                ));
+            }
+
+            // Update for next iteration
+            currentLevel = nextLevel;
+            currentIndex = Math.floor(currentIndex / 2);
+        }
+
+        return {
+            proof: proof,
+            rootHash: this.root.hash,
+            metadata: this.leaves[index].metadata
+        };
+    }
+
+        async verifyProof(content, proof) {
+            try {
+                // Compute the hash of the content
+                let currentHash = await this.computeHash(content);
+
+                console.log('Starting verification:');
+                console.log('Content hash:', currentHash);
+                console.log('Expected root:', proof.rootHash);
+                console.log('Proof steps:', proof.proof);
+
+                // Verify each step in the proof
+                for (const { hash, position } of proof.proof) {
+                    // Await the hash computation at each step
+                    currentHash = await this.computeHash(
+                        position === 'left' ? 
+                            hash + currentHash : 
+                            currentHash + hash
+                    );
+                    
+                    console.log(`Step (${position}):`, {
+                        pair: position === 'left' ? [hash, currentHash] : [currentHash, hash],
+                        resultHash: currentHash
+                    });
+                }
+
+                const valid = currentHash === proof.rootHash;
+                const timestamp = valid ? await this.verifyOpenTimestamp(proof.rootHash) : null;
+
+                console.log('Verification result:', {
+                    valid,
+                    finalHash: currentHash,
+                    expectedHash: proof.rootHash
+                });
+
+                return { valid, timestamp };
+            } catch (error) {
+                console.error('Verification error:', error);
+                return { valid: false, timestamp: null, error: error.message };
+            }
+        }
+
+        async computeHash(data) {
+            // If the input contains [object Promise], something went wrong
+            if (data.includes('[object Promise]')) {
+                console.error('Attempted to hash unresolved Promise:', data);
+                throw new Error('Attempted to hash unresolved Promise');
+            }
+
+            console.log('Computing hash for:', data.slice(0, 100) + '...');
+            
+            const encoder = new TextEncoder();
+            const buffer = encoder.encode(data);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            const hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+            
+            console.log('Computed hash:', hash);
+            return hash;
+        }
+
+        async createOpenTimestamp(hash) {
+            try {
+                const digest = OpenTimestamps.Utils.hexToBytes(hash);
+                const detached = OpenTimestamps.DetachedTimestampFile.fromHash(
+                    new OpenTimestamps.Ops.OpSHA256(), 
+                    digest
+                );
+                await OpenTimestamps.stamp(detached);
+                return Array.from(detached.serializeToBytes());
+            } catch (error) {
+                console.error('OpenTimestamp creation failed:', error);
+                return null;
+            }
+        }
+
+        async verifyOpenTimestamp(hash) {
+            const timestamp = this.pendingTimestamps.get(hash);
+            if (!timestamp) return null;
+
+            try {
+                const ots = new Uint8Array(timestamp);
+                const detached = OpenTimestamps.DetachedTimestampFile.deserialize(ots);
+                const verification = await OpenTimestamps.verify(detached);
+                return verification ? new Date(verification * 1000) : null;
+            } catch (error) {
+                console.error('OpenTimestamp verification failed:', error);
+                return null;
+            }
+        }
+
+        getHistory() {
+            return this.leaves.map(leaf => ({
+                content: leaf.content,
+                metadata: leaf.metadata,
+                hash: leaf.hash,
+                timestamp: leaf.metadata.timestamp
+            }));
+        }
+
+        async serialize() {
+            return JSON.stringify({
+                leaves: this.leaves.map(leaf => ({
+                    content: leaf.content,
+                    metadata: leaf.metadata,
+                    hash: leaf.hash
+                })),
+                timestamps: Array.from(this.pendingTimestamps.entries())
+            });
+        }
+
+        async deserialize(jsonString) {
+            const data = JSON.parse(jsonString);
+            this.leaves = [];
+            
+            for (const leafData of data.leaves) {
+                const leaf = new MerkleNode(
+                    leafData.hash,
+                    leafData.content,
+                    leafData.metadata
+                );
+                this.leaves.push(leaf);
+            }
+
+            this.pendingTimestamps = new Map(data.timestamps);
+            await this.rebuildTree();
+            
+            return this.root !== null;
+        }
+    }
+
     class BitQuillApp {
         constructor() {
             // UI Elements
@@ -207,52 +621,43 @@
             this.serializedDataDisplay = document.getElementById('serialized-data');
             this.proofsList = document.getElementById('proofs-list');
 
-            // Document State
+            // Core components
             this.quill = null;
-            this.hashChain = []; // Array to store hash chain entries
-            this.currentHash = ''; // Latest hash in the hash chain
-            this.difficulty = 1; // Initial difficulty level for PoW (adjustable)
-            this.editCount = 0; // Number of edits since last difficulty adjustment
-            this.totalCharacters = 0; // Total characters in the current batch of edits
-            this.totalTime = 0; // Total PoW time in milliseconds for the current batch
-
-            // PoW Task Queue
-            this.powQueue = []; // Queue for PoW tasks
-            this.isProcessingPoW = false; // Flag for tracking if PoW is being processed
-
+            this.editAnalyzer = new EditAnalyzer();
+            this.merkleTree = new EnhancedMerkleTree();
+            this.lastContent = '';
+            
+            // PoW configuration
+            this.powConfig = {
+                min: 1,
+                max: 32,                    // Increased max difficulty
+                current: 1,
+                adjustmentInterval: 2016,   // Match Bitcoin's adjustment interval, for spiritual reasons
+                targetEditInterval: 200,    // Target typing speed: 200ms per character
+                maxAdjustmentFactor: 4,    // Max 4x difficulty change either direction
+                // For analyzing typing patterns
+                windowSize: 50,            // Rolling window for speed analysis
+                minSampleSize: 5           // Minimum samples needed
+            };
+            
             // Initialize Web Worker for PoW
             this.initializeWebWorker();
-                // Check if required libraries are loaded
-            if (typeof Quill === 'undefined') {
-                console.error('Quill library is not loaded.');
-                this.updateStatus('Quill library is not loaded. Editor functionality is unavailable.', 'error');
-            }
-            if (typeof OpenTimestamps === 'undefined') {
-                console.error('OpenTimestamps library is not loaded.');
-                this.updateStatus('OpenTimestamps library is not loaded. Timestamping is unavailable.', 'error');
-            }
         }
 
-        /**
-         * Initialize the application
-         */
         init() {
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => {
                     this.initializeQuillEditor();
                     this.attachEventListeners();
-                    this.initializeGenesisEntry();
+                    this.initializeDocument();
                 });
             } else {
                 this.initializeQuillEditor();
                 this.attachEventListeners();
-                this.initializeGenesisEntry();
+                this.initializeDocument();
             }
         }
 
-        /**
-         * Initialize the Quill Rich Text Editor
-         */
         initializeQuillEditor() {
             console.log('Initializing Quill editor...');
             try {
@@ -269,24 +674,19 @@
                     }
                 });
 
-                console.log('Quill editor initialized successfully');
-
-                // Listen to text changes in the editor
                 this.quill.on('text-change', (delta, oldDelta, source) => {
                     if (source === 'user') {
                         this.handleEdit(delta);
                     }
                 });
+
+                console.log('Quill editor initialized successfully');
             } catch (error) {
                 console.error('Error initializing Quill editor:', error);
-                this.updateStatus('Failed to initialize the editor. Please check the console for more information.', 'error');
+                this.updateStatus('Failed to initialize editor', 'error');
             }
         }
 
-
-        /**
-         * Attach event listeners to UI buttons
-         */
         attachEventListeners() {
             this.newDocBtn.addEventListener('click', () => this.newDocument());
             this.verifyBtn.addEventListener('click', () => this.verifyDocument());
@@ -296,841 +696,409 @@
             this.fileInput.addEventListener('change', (event) => this.deserializeDocument(event));
         }
 
-        /**
-         * Initialize the genesis entry in the hash chain
-         */
-        async initializeGenesisEntry() {
+        async initializeDocument() {
             try {
-                console.log('Starting initializeGenesisEntry');
-                const genesisContent = this.quill.root.innerHTML;
-                console.log('Genesis content:', genesisContent);
-
-                if (!genesisContent) {
-                    throw new Error('Genesis content is empty');
-                }
-                
-                const genesisContentHash = await this.computeHash(genesisContent);
-                console.log('Genesis content hash:', genesisContentHash);
-
-
-                // Use a single timestamp for consistency
+                const initialContent = this.quill.root.innerHTML;
                 const timestamp = Date.now();
-                console.log('Timestamp:', timestamp);
+                
+                // Initialize with empty content as previous
+                const editAnalysis = this.editAnalyzer.recordEdit(initialContent, '', timestamp);
+                
+                // Perform initial PoW
+                const powResult = await this.performProofOfWork(initialContent, this.powConfig.current);
+                
+                const merkleResult = await this.merkleTree.addLeaf(initialContent, {
+                    timestamp,
+                    editStats: this.editAnalyzer.getEditStats(),
+                    powResult: powResult,  // Include PoW result
+                    isGenesis: true
+                });
 
-                const genesisEntryData = `0${genesisContentHash}${timestamp}`;
-                console.log('Genesis entry data:', genesisEntryData);
-
-                // Start Proof of Work for genesis entry
-                const powStartTime = performance.now();
-                const { nonce, hash } = await this.performProofOfWork(genesisEntryData, this.difficulty);
-                const powEndTime = performance.now();
-                const powDuration = powEndTime - powStartTime;
-
-                console.log('PoW completed. Nonce:', nonce, 'Hash:', hash, 'Duration:', powDuration);
-
-                // Update tracking variables
-                this.totalTime += powDuration;
-                const charCount = this.countCharacters(genesisContent);
-                this.totalCharacters += charCount;
-                this.editCount += 1;
-
-                // Create genesis entry
-                const genesisEntry = {
-                    prev_hash: '0', // No previous hash for genesis
-                    content_hash: genesisContentHash,
-                    current_hash: hash,
-                    nonce: nonce,
-                    timestamp: timestamp,
-                    difficulty: this.difficulty,
-                    totalTime: this.totalTime,
-                    totalCharacters: this.totalCharacters,
-                    editCount: this.editCount,
-                    openTimestamp: null // Will be updated asynchronously
-                };
-
-                console.log('Genesis entry created:', genesisEntry);
-
-                // Append to hash chain and update current hash
-                this.hashChain.push(genesisEntry);
-                this.currentHash = genesisEntry.current_hash;
-
-                // Trigger asynchronous timestamping for genesis entry
-                await this.createAsyncTimestamp(genesisContentHash, 0);
-
-                // Update UI elements
-                this.updateUIAfterEdit('Initialized with genesis entry.', 'info');
-                this.updateHashDisplay();
-                this.updateProofsDisplay();
-                this.updateContentDisplay();
-
-                // Enable the Verify button now that genesis is initialized
+                this.lastContent = initialContent;
+                this.updateUIAfterEdit('Document initialized', 'success');
                 this.verifyBtn.disabled = false;
 
-                console.log('initializeGenesisEntry completed successfully');
-            } catch (error) {
-                console.error('Detailed error in initializeGenesisEntry:', error);
-                this.updateStatus(`Genesis Entry initialization failed: ${error.message}`, 'error');
-            }
-        }
-
-        /**
-         * Handle user edits in the Quill editor
-         * @param {Object} delta - The delta object representing the change
-         */
-        async handleEdit(delta) {
-            // Get the current content as HTML
-            const currentContent = this.quill.root.innerHTML;
-            const contentHash = await this.computeHash(currentContent);
-
-            // Prepare data for hashing: previous_hash + content_hash + timestamp
-            const timestamp = Date.now();
-            const dataToHash = `${this.currentHash}${contentHash}${timestamp}`;
-
-            // Check if we need to create an OpenTimestamps proof (as per difficulty, every 100 edits)
-            const needsTimestamp = this.editCount % 100 === 0;
-
-            // Enqueue PoW task
-            this.enqueuePoWTask({
-                dataToHash: dataToHash,
-                currentContent: currentContent,
-                contentHash: contentHash,
-                timestamp: timestamp,
-                needsTimestamp: needsTimestamp
-            });
-        }
-
-        /**
-         * Enqueue a PoW task and start processing if not already active
-         * @param {Object} task - The PoW task to enqueue
-         */
-        enqueuePoWTask(task) {
-            this.powQueue.push(task);
-
-            // Start processing if not currently doing PoW
-            if (!this.isProcessingPoW) {
-                this.processNextPoWTask();
-            }
-        }
-
-        /**
-         * Create a new document, resetting the editor and hash chain
-         */
-        newDocument() {
-            // Clear the editor
-            this.quill.setText('');
-
-            // Reset the hash chain and other state variables
-            this.hashChain = [];
-            this.currentHash = '';
-            this.difficulty = 1;
-            this.editCount = 0;
-            this.totalCharacters = 0;
-            this.totalTime = 0;
-
-            // Reinitialize the genesis entry
-            this.initializeGenesisEntry();
-
-            // Update UI
-            this.updateUIAfterEdit('New document created.', 'success');
-            this.updateHashDisplay();
-            this.updateProofsDisplay();
-            this.updateContentDisplay();
-        }
-
-
-        /**
-         * Process the next task in the PoW queue
-         */
-        async processNextPoWTask() {
-            if (this.powQueue.length === 0) {
-                this.isProcessingPoW = false;
-                return;
-            }
-
-            this.isProcessingPoW = true;
-
-            // Get the next task from the queue
-            const task = this.powQueue.shift();
-            const { dataToHash, currentContent, contentHash, timestamp, needsTimestamp } = task;
-
-            // Show processing status and spinner
-            this.updateStatus('Processing edit...', 'info');
-            this.spinner.style.display = 'inline-block';
-
-            try {
-                // Start Proof of Work
-                const powStartTime = performance.now();
-                const { nonce, hash } = await this.performProofOfWork(dataToHash, this.difficulty);
-                const powEndTime = performance.now();
-                const powDuration = powEndTime - powStartTime;
-
-                // Update tracking variables
-                this.totalTime += powDuration;
-                this.totalCharacters = this.countCharacters(currentContent);
-                this.editCount += 1;
-
-                // Find the last timestamped entry
-                const lastTimestampedEntry = this.hashChain.slice().reverse().find(entry => entry.openTimestamp !== null);
-
-                // Create a new hash chain entry
-                const newEntry = {
-                    prev_hash: this.currentHash,
-                    content_hash: contentHash,
-                    current_hash: hash,
-                    nonce: nonce,
-                    timestamp: timestamp,
-                    difficulty: this.difficulty,
-                    totalTime: this.totalTime,
-                    totalCharacters: this.totalCharacters,
-                    editCount: this.editCount,
-                    openTimestamp: null,  // Will be updated if a new timestamp is created
-                    lastTimestampIndex: lastTimestampedEntry ? this.hashChain.indexOf(lastTimestampedEntry) : null
-                };
-
-                // Append the new entry to the hash chain
-                this.hashChain.push(newEntry);
-                const newEntryIndex = this.hashChain.length - 1;
-                this.currentHash = hash;
-
-                // Trigger asynchronous timestamping if needed
-                if (needsTimestamp) {
-                    this.createAsyncTimestamp(contentHash, newEntryIndex);
-                }
-
-                // After every 100 edits, adjust difficulty
-                if (this.editCount % 100 === 0) {
-                    this.adjustDifficulty();
-                }
-
-                // Update UI elements
-                this.updateUIAfterEdit('Edit processed and added to hash chain.', 'success');
-                this.updateHashDisplay();
+                // Update displays
+                this.updateDocumentHash(merkleResult.leaf.hash);
                 this.updateProofsDisplay();
                 this.updateContentDisplay();
 
             } catch (error) {
-                console.error('Error during PoW processing:', error);
-                this.updateStatus(`Error processing edit: ${error.message}`, 'error');
-            } finally {
-                // Hide spinner
-                this.spinner.style.display = 'none';
-
-                // Process the next task in the queue
-                this.processNextPoWTask();
+                console.error('Document initialization error:', error);
+                this.updateStatus(`Initialization failed: ${error.message}`, 'error');
             }
         }
 
-        /**
-         * Initialize a Web Worker for Proof of Work (PoW)
-         */
+        async handleEdit(delta) {
+            const currentContent = this.quill.root.innerHTML;
+            const timestamp = Date.now();
+
+            try {
+// Analyze edit patterns
+                const editAnalysis = this.editAnalyzer.recordEdit(currentContent, this.lastContent, timestamp);
+                
+                if (!editAnalysis.isValid) {
+                    throw new Error(`Suspicious edit pattern: ${editAnalysis.patterns.join(', ')}`);
+                }
+
+                // Perform proof of work
+                const powResult = await this.performProofOfWork(currentContent, this.powConfig.current);
+
+                // Add to Merkle tree with metadata
+                const merkleResult = await this.merkleTree.addLeaf(currentContent, {
+                    timestamp,
+                    editStats: this.editAnalyzer.getEditStats(),
+                    powResult: powResult
+                });
+
+                this.lastContent = currentContent;
+                
+                // Adjust PoW difficulty
+                if (this.editAnalyzer.getEditStats().totalEdits % this.powConfig.adjustmentInterval === 0) {
+                    this.adjustPowDifficulty();
+                }
+
+                // Update UI
+                this.updateUIAfterEdit('Edit recorded successfully', 'success');
+                this.updateDocumentHash(merkleResult.leaf.hash);
+                this.updateProofsDisplay();
+                this.updateContentDisplay();
+
+            } catch (error) {
+                console.error('Edit processing error:', error);
+                this.updateStatus(error.message, 'error');
+            }
+        }
+
         initializeWebWorker() {
-            // Define the worker script as a string
             const workerScript = `
                 self.addEventListener('message', async (event) => {
-                    const { type, input, difficulty } = event.data;
-                    if (type === 'POW') {
-                        let nonce = 0;
-                        let hash = '';
-                        const target = '0'.repeat(difficulty);
+                    const { content, difficulty } = event.data;
+                    const startTime = Date.now();  // Use Date.now() instead of performance.now()
+                    let nonce = 0;
+                    const target = '0'.repeat(difficulty);
 
-                        while (true) {
-                            const combined = \`\${input}\${nonce}\`;
-                            const encoder = new TextEncoder();
-                            const data = encoder.encode(combined);
-                            const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-                            const hashArray = Array.from(new Uint8Array(hashBuffer));
-                            const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+                    while (true) {
+                        const combined = \`\${content}\${nonce}\`;
+                        const encoder = new TextEncoder();
+                        const data = encoder.encode(combined);
+                        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+                        const hashArray = Array.from(new Uint8Array(hashBuffer));
+                        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
-                            if (hashHex.startsWith(target)) {
-                                self.postMessage({ type: 'POW_RESULT', nonce: nonce, hash: hashHex });
-                                break;
-                            }
+                        if (hashHex.startsWith(target)) {
+                            self.postMessage({ 
+                                type: 'POW_RESULT', 
+                                nonce: nonce, 
+                                hash: hashHex,
+                                duration: Date.now() - startTime  // Calculate duration here
+                            });
+                            break;
+                        }
 
-                            nonce++;
+                        nonce++;
 
-                            // Periodically yield to keep the worker responsive
-                            if (nonce % 1000 === 0) {
-                                await new Promise(resolve => setTimeout(resolve, 0));
-                            }
+                        if (nonce % 1000 === 0) {
+                            await new Promise(resolve => setTimeout(resolve, 0));
+                        }
 
-                            // Prevent infinite loop
-                            if (nonce === Number.MAX_SAFE_INTEGER) {
-                                self.postMessage({ type: 'POW_ERROR', message: 'Proof of Work failed: Maximum nonce reached.' });
-                                break;
-                            }
+                        if (nonce === Number.MAX_SAFE_INTEGER) {
+                            self.postMessage({ 
+                                type: 'POW_ERROR', 
+                                message: 'Maximum nonce reached' 
+                            });
+                            break;
                         }
                     }
                 });
             `;
 
-            // Create a Blob from the worker script
             const blob = new Blob([workerScript], { type: 'application/javascript' });
-            const workerURL = URL.createObjectURL(blob);
-            this.worker = new Worker(workerURL);
-
-            // Listen for messages from the worker
-            this.worker.addEventListener('message', (event) => {
-                const { type, nonce, hash, message } = event.data;
-                if (type === 'POW_RESULT') {
-                    if (this.powResolve) {
-                        this.powResolve({ nonce, hash });
-                        this.powResolve = null;
-                        this.powReject = null;
-                    }
-                } else if (type === 'POW_ERROR') {
-                    if (this.powReject) {
-                        this.powReject(new Error(message));
-                        this.powResolve = null;
-                        this.powReject = null;
-                    }
-                }
-            });
+            const workerUrl = URL.createObjectURL(blob);
+            this.worker = new Worker(workerUrl);
         }
 
-        /**
-         * Perform Proof of Work using Web Worker
-         * @param {String} data - The data to hash
-         * @param {Number} difficulty - The difficulty level (number of leading zeros)
-         * @returns {Promise} - Resolves with nonce and hash
-         */
-        performProofOfWork(data, difficulty) {
+        performProofOfWork(content, difficulty) {
             return new Promise((resolve, reject) => {
-                this.powResolve = resolve;
-                this.powReject = reject;
-                this.worker.postMessage({ type: 'POW', input: data, difficulty: difficulty });
+                const startTime = performance.now();
+                
+                this.worker.onmessage = (event) => {
+                    const { type, nonce, hash, duration, message } = event.data;
+                    if (type === 'POW_RESULT') {
+                        resolve({ nonce, hash, duration });
+                    } else if (type === 'POW_ERROR') {
+                        reject(new Error(message));
+                    }
+                };
+
+                this.worker.postMessage({ 
+                    content, 
+                    difficulty,
+                    startTime
+                });
             });
         }
 
-        /**
-         * Compute SHA-256 hash of the given data
-         * @param {String} data - The data to hash
-         * @returns {String} - Hexadecimal representation of the hash
-         */
-        async computeHash(data) {
-            console.log('computeHash called with data:', data);
-            
-            if (typeof window === 'undefined' || !window.crypto) {
-                throw new Error('Web Crypto API is not available in this environment');
-            }
-            
-            if (!window.crypto.subtle) {
-                throw new Error('Crypto.subtle is not available. This might be due to an insecure context.');
-            }
-            
-            try {
-                const encoder = new TextEncoder();
-                const dataBuffer = encoder.encode(data);
-                const hashBuffer = await window.crypto.subtle.digest('SHA-256', dataBuffer);
-                const hashArray = Array.from(new Uint8Array(hashBuffer));
-                const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-                console.log('Computed hash:', hashHex);
-                return hashHex;
-            } catch (error) {
-                console.error('Error in computeHash:', error);
-                throw error;
-            }
-        }
-
-        /**
-         * Convert ArrayBuffer to Hex String
-         * @param {ArrayBuffer} buffer - The buffer to convert
-         * @returns {String} - Hexadecimal string
-         */
-        arrayBufferToHex(buffer) {
-            const byteArray = new Uint8Array(buffer);
-            const hexCodes = Array.from(byteArray).map(value => {
-                const hex = value.toString(16);
-                return hex.padStart(2, '0');
-            });
-            return hexCodes.join('');
-        }
-
-        /**
-         * Count the number of characters in the current document
-         * @param {String} content - The HTML content of the document
-         * @returns {Number} - Total number of characters (excluding HTML tags)
-         */
-        countCharacters(content) {
-            // Create a temporary DOM element to strip HTML tags
-            const tempElement = document.createElement('div');
-            tempElement.innerHTML = content;
-            const plainText = tempElement.textContent || tempElement.innerText || '';
-            return plainText.length;
-        }
-
-        /**
-         * Adjust the PoW difficulty based on average time per character
-         */
-        adjustDifficulty() {
-            if ( this.editCount % 100 === 0) return; // Only adjust after 10 edits
-
-            if (this.totalCharacters === 0) {
-                console.warn('No characters edited. Difficulty remains unchanged.');
+        adjustPowDifficulty() {
+            const stats = this.editAnalyzer.getEditStats();
+            if (!stats || stats.totalEdits % this.powConfig.adjustmentInterval !== 0) {
                 return;
             }
 
-            const averageTimePerChar = this.totalTime / this.totalCharacters; // in ms
+            // Get geometric mean of recent typing speeds
+            const recentIntervals = this.editAnalyzer.intervalHistory
+                .slice(-this.powConfig.windowSize)
+                .filter(interval => interval > 0);
 
-            if (averageTimePerChar < 500) {
-                this.difficulty += 1;
-                this.updateStatus(`Increasing difficulty to ${this.difficulty} for faster PoW.`, 'info');
-            } else {
-                if (this.difficulty > 1) {
-                    this.difficulty -= 1;
-                    this.updateStatus(`Decreasing difficulty to ${this.difficulty} for slower PoW.`, 'info');
-                } else {
-                    this.updateStatus(`Difficulty remains at minimum level ${this.difficulty}.`, 'info');
-                }
-            }
-
-        }
-
-        /**
-         * Create an OpenTimestamp asynchronously
-         * @param {String} contentHash - The hash to timestamp
-         * @param {Number} entryIndex - The index of the hash chain entry to update
-         */
-        async createAsyncTimestamp(contentHash, entryIndex) {
-            if (typeof OpenTimestamps === 'undefined') {
-                console.error('OpenTimestamps library is not available.');
-                this.updateStatus('OpenTimestamps is not available. Timestamp not created.', 'error');
+            if (recentIntervals.length < this.powConfig.minSampleSize) {
                 return;
             }
 
-            try {
-                const digest = OpenTimestamps.Utils.hexToBytes(contentHash);
-                const detachedTimestamp = OpenTimestamps.DetachedTimestampFile.fromHash(new OpenTimestamps.Ops.OpSHA256(), digest);
-                
-                await OpenTimestamps.stamp(detachedTimestamp);
-                
-                const serializedTimestamp = detachedTimestamp.serializeToBytes();
-                const base64Ots = btoa(String.fromCharCode.apply(null, serializedTimestamp));
+            // Calculate geometric mean
+            const logSum = recentIntervals.reduce((sum, interval) => 
+                sum + Math.log(interval), 0);
+            const geometricMean = Math.exp(logSum / recentIntervals.length);
 
-                // Update the hash chain entry with the timestamp
-                if (this.hashChain[entryIndex]) {
-                    this.hashChain[entryIndex].openTimestamp = base64Ots;
-                    this.updateProofsDisplay();
-                    console.log(`Timestamp created for entry ${entryIndex}`);
-                }
-            } catch (error) {
-                console.error('Error creating OpenTimestamp:', error);
-                this.updateStatus(`Failed to create timestamp: ${error.message}`, 'error');
+            // Calculate adjustment factor
+            let adjustmentFactor = this.powConfig.targetEditInterval / geometricMean;
+
+            // Limit adjustment to maxAdjustmentFactor
+            adjustmentFactor = Math.min(
+                Math.max(
+                    adjustmentFactor,
+                    1 / this.powConfig.maxAdjustmentFactor
+                ),
+                this.powConfig.maxAdjustmentFactor
+            );
+
+            // Calculate new difficulty
+            let newDifficulty = Math.round(this.powConfig.current * adjustmentFactor);
+            newDifficulty = Math.max(
+                this.powConfig.min,
+                Math.min(this.powConfig.max, newDifficulty)
+            );
+
+            if (newDifficulty !== this.powConfig.current) {
+                this.powConfig.current = newDifficulty;
+                this.updateStatus(
+                    `Difficulty adjusted to ${this.powConfig.current} ` +
+                    `(mean interval: ${Math.round(geometricMean)}ms)`,
+                    'info'
+                );
             }
         }
 
-        /**
-         * Manually trigger a timestamp for the current document state
-         */
         async manualTimestamp() {
             const currentContent = this.quill.root.innerHTML;
-            const contentHash = await this.computeHash(currentContent);
-            const entryIndex = this.hashChain.length - 1;
+            const contentHash = await this.merkleTree.computeHash(currentContent);
             
             this.updateStatus('Creating manual timestamp...', 'info');
-            await this.createAsyncTimestamp(contentHash, entryIndex);
-            this.updateStatus('Manual timestamp created successfully.', 'success');
+            const timestamp = await this.merkleTree.createOpenTimestamp(contentHash);
+            
+            if (timestamp) {
+                this.updateStatus('Manual timestamp created successfully', 'success');
+                this.updateProofsDisplay();
+            } else {
+                this.updateStatus('Failed to create timestamp', 'error');
+            }
         }
 
-        /**
-         * Serialize the document along with the hash chain and content hash
-         */
+        async newDocument() {
+            this.quill.setText('');
+            this.merkleTree = new EnhancedMerkleTree();
+            this.editAnalyzer = new EditAnalyzer();
+            this.lastContent = '';
+            this.powConfig.current = this.powConfig.min;
+
+            await this.initializeDocument();
+            this.updateUIAfterEdit('New document created', 'success');
+            this.updateDocumentHash('');
+            this.updateProofsDisplay();
+            this.updateContentDisplay();
+        }
+
         async serializeDocument() {
-            // Disable UI to prevent concurrent operations
-            this.disableUI();
-
-            // Show serialization status and spinner
-            this.updateStatus('Serializing document...', 'info');
-            this.spinner.style.display = 'inline-block';
-
             try {
-                // Get the current HTML content
-                const currentContent = this.quill.root.innerHTML;
-                const contentHash = await this.computeHash(currentContent);
+                this.disableUI();
+                this.updateStatus('Serializing document...', 'info');
+                this.spinner.style.display = 'inline-block';
 
-                // Serialize content and hash chain
-                const serializedContent = JSON.stringify({
-                    content: currentContent,
-                    hash_chain: this.hashChain
-                }, null, 2);
+                const serialized = await this.merkleTree.serialize();
+                const blob = new Blob([serialized], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `bitquill_document_${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
 
-                // Compute hash of the serialized content
-                const contentHashSerialized = await this.computeHash(serializedContent);
-
-                // Create a final serialized object including the content hash
-                const finalSerialized = JSON.stringify({
-                    content: currentContent,
-                    hash_chain: this.hashChain,
-                    content_hash: contentHashSerialized
-                }, null, 2);
-
-                // Display serialized data
-                this.serializedDataDisplay.textContent = finalSerialized;
-
-                // Trigger download of serialized data
-                this.downloadSerializedFile(finalSerialized, 'bitquill_document.json');
-
-                // Update status
-                this.updateStatus('Document serialized successfully.', 'success');
-
+                this.serializedDataDisplay.textContent = serialized;
+                this.updateStatus('Document serialized successfully', 'success');
             } catch (error) {
-                console.error('Serialization Error:', error);
+                console.error('Serialization error:', error);
                 this.updateStatus(`Serialization failed: ${error.message}`, 'error');
             } finally {
-                // Re-enable UI
                 this.spinner.style.display = 'none';
                 this.enableUI();
             }
         }
 
-        /**
-         * Trigger download of serialized data as a JSON file
-         * @param {String} data - The serialized JSON data
-         * @param {String} filename - The desired filename
-         */
-        downloadSerializedFile(data, filename) {
-            const blob = new Blob([data], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            a.click();
-            URL.revokeObjectURL(url);
-        }
-
-        /**
-         * Deserialize the document from a JSON file
-         * @param {Event} event - The file input change event
-         */
         async deserializeDocument(event) {
             const file = event.target.files[0];
             if (!file) {
-                this.updateStatus('No file selected for deserialization.', 'error');
+                this.updateStatus('No file selected', 'error');
                 return;
             }
 
-            // Disable UI during deserialization
-            this.disableUI();
-            this.updateStatus('Deserializing document...', 'info');
-            this.spinner.style.display = 'inline-block';
-
-            const reader = new FileReader();
-
-            reader.onload = async (e) => {
-                try {
-                    const data = JSON.parse(e.target.result);
-                    if (!data.content || !data.hash_chain || !data.content_hash) {
-                        throw new Error('Invalid serialized data format.');
-                    }
-
-                    // Verify the hash of the serialized content
-                    const serializedContent = JSON.stringify({
-                        content: data.content,
-                        hash_chain: data.hash_chain
-                    }, null, 2);
-                    const computedContentHash = await this.computeHash(serializedContent);
-                    if (computedContentHash !== data.content_hash) {
-                        throw new Error('Content hash mismatch. Document may be altered.');
-                    }
-
-                    // Verify the hash chain integrity
-                    const isValid = await this.verifyHashChain(data.hash_chain, data.content);
-                    if (!isValid) {
-                        throw new Error('Hash chain verification failed. Document may be tampered.');
-                    }
-
-                    // Apply the content to Quill editor silently to prevent triggering events
-                    this.quill.setContents(this.quill.clipboard.convert(data.content), 'silent');
-
-                    // Restore the hash chain and current hash
-                    this.hashChain = data.hash_chain;
-                    this.currentHash = this.hashChain[this.hashChain.length - 1].current_hash;
-
-                    // Reset difficulty and tracking variables
-                    this.difficulty = this.hashChain[this.hashChain.length - 1].difficulty;
-                    this.editCount = this.hashChain[this.hashChain.length - 1].editCount;
-                    this.totalCharacters = this.hashChain[this.hashChain.length - 1].totalCharacters;
-                    this.totalTime = this.hashChain[this.hashChain.length - 1].totalTime;
-
-                    // Update UI elements
-                    this.updateUIAfterEdit('Document deserialized and verified successfully.', 'success');
-                    this.updateHashDisplay();
-                    this.updateProofsDisplay();
-                    this.updateContentDisplay();
-
-                    // Enable the Verify button as the document is now loaded
-                    this.verifyBtn.disabled = false;
-
-                } catch (error) {
-                    console.error('Deserialization Error:', error);
-                    this.updateStatus(`Deserialization failed: ${error.message}`, 'error');
-                }
-
-                // Re-enable UI
-                this.spinner.style.display = 'none';
-                this.enableUI();
-
-                // Reset file input for future deserializations
-                this.fileInput.value = '';
-            };
-
-            reader.onerror = () => {
-                console.error('File reading error.');
-                this.updateStatus('Failed to read the file.', 'error');
-                this.spinner.style.display = 'none';
-                this.enableUI();
-            };
-
-            // Read the selected file as text
-            reader.readAsText(file);
-        }
-
-        /**
-         * Verify the integrity of the hash chain
-         * @param {Array} hashChain - The array of hash chain entries
-         * @param {String} currentContent - The current HTML content from Quill editor
-         * @returns {Boolean} - True if valid, else false
-         */
-        async verifyHashChain(hashChain, currentContent) {
-            console.log('Starting hash chain verification...');
-            console.log('Hash Chain:', hashChain);
-
-            // Check if hashChain is a valid non-empty array
-            if (!Array.isArray(hashChain) || hashChain.length === 0) {
-                console.error('Hash chain is empty or not an array.');
-                return false;
-            }
-
-            // Iterate through each hash chain entry to verify integrity
-            for (let i = 0; i < hashChain.length; i++) {
-                const entry = hashChain[i];
-                console.log(`Verifying entry ${i}:`, entry);
-
-                // Check if entry is defined
-                if (!entry) {
-                    console.error(`Entry at index ${i} is undefined.`);
-                    return false;
-                }
-
-                // Check if required properties exist
-                const requiredProps = ['prev_hash', 'content_hash', 'current_hash', 'nonce', 'timestamp', 'difficulty', 'totalTime', 'totalCharacters', 'editCount'];
-                for (const prop of requiredProps) {
-                    if (!entry.hasOwnProperty(prop)) {
-                        console.error(`Missing property '${prop}' in entry ${i}.`);
-                        return false;
-                    }
-                }
-
-                // Reconstruct data to hash: previous_hash + content_hash + timestamp
-                const prevHash = entry.prev_hash;
-                const contentHash = entry.content_hash;
-                const timestamp = entry.timestamp;
-                const nonce = entry.nonce;
-
-                const dataToHash = `${prevHash}${contentHash}${timestamp}${nonce}`;
-                const recomputedHash = await this.computeHash(dataToHash);
-
-                // Verify the recomputed hash matches the stored current_hash
-                if (recomputedHash !== entry.current_hash) {
-                    console.error(`Hash mismatch at entry ${i}. Expected ${entry.current_hash}, got ${recomputedHash}.`);
-                    return false;
-                }
-
-                // Verify that the hash satisfies the difficulty requirement
-                if (!entry.current_hash.startsWith('0'.repeat(entry.difficulty))) {
-                    console.error(`Proof of Work not satisfied at entry ${i}.`);
-                    return false;
-                }
-
-                // For entries beyond the genesis, ensure prev_hash matches the previous entry's current_hash
-                if (i > 0) {
-                    const previousEntry = hashChain[i - 1];
-                    if (entry.prev_hash !== previousEntry.current_hash) {
-                        console.error(`Previous hash mismatch at entry ${i}. Expected ${previousEntry.current_hash}, got ${entry.prev_hash}.`);
-                        return false;
-                    }
-                } else {
-                    // For genesis entry, prev_hash should be '0'
-                    if (entry.prev_hash !== '0') {
-                        console.error(`Genesis entry's previous_hash should be '0', got '${entry.prev_hash}'.`);
-                        return false;
-                    }
-                }
-            }
-
-            // Verify that the latest content_hash matches the current document's hash
-            const latestEntry = hashChain[hashChain.length - 1];
-            const latestContentHash = await this.computeHash(currentContent);
-            if (latestContentHash !== latestEntry.content_hash) {
-                console.error(`Latest content hash mismatch. Expected ${latestEntry.content_hash}, got ${latestContentHash}.`);
-                return false;
-            }
-
-            console.log('Hash chain verification successful.');
-            return true;
-        }
-
-        /**
-         * Verify the document's integrity by checking the hash chain and OpenTimestamps
-         */
-        async verifyDocument() {
-            // Disable UI during verification
-            this.disableUI();
-            this.updateStatus('Verifying document...', 'info');
-            this.spinner.style.display = 'inline-block';
-
             try {
-                const currentContent = this.quill.root.innerHTML;
-                const isValid = await this.verifyHashChain(this.hashChain, currentContent);
+                this.disableUI();
+                this.updateStatus('Deserializing document...', 'info');
+                this.spinner.style.display = 'inline-block';
+
+                const content = await file.text();
+                const success = await this.merkleTree.deserialize(content);
                 
-                if (isValid) {
-                    let confirmedTimestamps = [];
-                    let pendingTimestamps = 0;
-                    let totalTimestamps = 0;
-
-                    for (let entry of this.hashChain) {
-                        if (entry.openTimestamp) {
-                            totalTimestamps++;
-                            const ots = Uint8Array.from(atob(entry.openTimestamp), c => c.charCodeAt(0));
-                            const detachedOts = OpenTimestamps.DetachedTimestampFile.deserialize(ots);
-                            const digest = OpenTimestamps.Utils.hexToBytes(entry.content_hash);
-                            const detached = OpenTimestamps.DetachedTimestampFile.fromHash(new OpenTimestamps.Ops.OpSHA256(), digest);
-                            
-                            const verificationResult = await OpenTimestamps.verify(detachedOts, detached);
-                            
-                            if (verificationResult === undefined) {
-                                pendingTimestamps++;
-                            } else {
-                                // Convert Unix timestamp to milliseconds
-                                confirmedTimestamps.push(new Date(verificationResult * 1000));
-                            }
-                        }
+                if (success) {
+                    const history = this.merkleTree.getHistory();
+                    if (history.length > 0) {
+                        const lastEdit = history[history.length - 1];
+                        this.quill.setContents(
+                            this.quill.clipboard.convert(lastEdit.content),
+                            'silent'
+                        );
+                        this.lastContent = lastEdit.content;
                     }
 
-                    if (confirmedTimestamps.length > 0) {
-                        const earliestTimestamp = new Date(Math.min(...confirmedTimestamps));
-                        const latestTimestamp = new Date(Math.max(...confirmedTimestamps));
-                        this.updateStatus(`Document is valid. Earliest confirmed timestamp: ${earliestTimestamp.toUTCString()}. Latest confirmed timestamp: ${latestTimestamp.toUTCString()}. Confirmed: ${confirmedTimestamps.length}, Pending: ${pendingTimestamps}, Total: ${totalTimestamps}.`, 'success');
-                    } else if (pendingTimestamps > 0) {
-                        this.updateStatus(`Document is valid. All timestamps (${pendingTimestamps}) are still pending confirmation. Please try again later.`, 'info');
-                    } else if (totalTimestamps > 0) {
-                        this.updateStatus(`Document is valid. ${totalTimestamps} timestamp(s) created but not yet confirmed. Please try again later.`, 'info');
-                    } else {
-                        this.updateStatus('Document is valid. No timestamps have been created yet.', 'info');
-                    }
+                    this.updateStatus('Document deserialized successfully', 'success');
+                    this.updateUIAfterEdit('Document loaded', 'success');
                 } else {
-                    this.updateStatus('Document verification failed. Integrity compromised.', 'error');
+                    throw new Error('Failed to deserialize document');
                 }
             } catch (error) {
-                console.error('Verification Error:', error);
-                this.updateStatus(`Verification failed: ${error.message}`, 'error');
+                console.error('Deserialization error:', error);
+                this.updateStatus(`Deserialization failed: ${error.message}`, 'error');
+            } finally {
+                this.spinner.style.display = 'none';
+                this.enableUI();
+                this.fileInput.value = '';
             }
-
-            // Re-enable UI
-            this.spinner.style.display = 'none';
-            this.enableUI();
         }
 
+        async verifyDocument() {
+            try {
+                this.disableUI();
+                this.updateStatus('Verifying document...', 'info');
+                this.spinner.style.display = 'inline-block';
 
-        /**
-         * Update UI elements after an edit
-         * @param {String} message - Status message
-         * @param {String} type - Status type ('success', 'error', 'info')
-         */
+                const history = this.merkleTree.getHistory();
+                let verifiedTimestamps = 0;
+
+                for (let i = 0; i < history.length; i++) {
+                    const entry = history[i];
+                    const proof = await this.merkleTree.getProof(i);  // Use index directly
+                    
+                    if (!proof) {
+                        this.updateStatus(`Verification failed: Missing proof for edit ${i}`, 'error');
+                        return;
+                    }
+
+                    const verification = await this.merkleTree.verifyProof(entry.content, proof);
+                    
+                    if (!verification.valid) {
+                        this.updateStatus(`Verification failed at edit ${i + 1}`, 'error');
+                        return;
+                    }
+
+                    if (verification.timestamp) {
+                        verifiedTimestamps++;
+                    }
+                }
+
+                const message = verifiedTimestamps > 0 ?
+                    `Document verified with ${verifiedTimestamps} timestamp(s)` :
+                    'Document verified (no timestamps yet)';
+                this.updateStatus(message, 'success');
+
+            } catch (error) {
+                console.error('Verification error:', error);
+                this.updateStatus(`Verification failed: ${error.message}`, 'error');
+            } finally {
+                this.spinner.style.display = 'none';
+                this.enableUI();
+            }
+        }
+
         updateUIAfterEdit(message, type) {
             this.updateStatus(message, type);
         }
 
-        /**
-         * Update the status display
-         * @param {String} message - Status message
-         * @param {String} type - Status type ('success', 'error', 'info')
-         */
         updateStatus(message, type) {
             this.statusDisplay.textContent = message;
             this.statusDisplay.className = `status ${type}`;
         }
 
-        /**
-         * Update the document hash display
-         */
-        updateHashDisplay() {
-            this.documentHashDisplay.textContent = this.currentHash;
+        updateDocumentHash(hash) {
+            this.documentHashDisplay.textContent = hash || 'No hash yet...';
         }
 
-        /**
-         * Update the proofs list display
-         */
         updateProofsDisplay() {
-            this.proofsList.innerHTML = '';
-            this.hashChain.forEach((entry, index) => {
-                const listItem = document.createElement('li');
-                const date = new Date(entry.timestamp);
-                const formattedDate = `${date.toLocaleDateString()} ${date.toLocaleTimeString()}.${date.getMilliseconds()}`;
-                
-                let timestampStatus = 'Not timestamped';
-                if (entry.openTimestamp === null && entry.editCount % 100 === 0) {
-                    timestampStatus = 'Timestamp creation in progress...';
-                } else if (entry.openTimestamp) {
-                    timestampStatus = 'Timestamped';
-                } else if (entry.lastTimestampIndex !== null) {
-                    timestampStatus = `Refers to timestamp at entry ${entry.lastTimestampIndex}`;
-                }
-
-                listItem.textContent = `Entry ${index}: 
-                    Prev Hash=${entry.prev_hash.substr(0, 8)}..., 
-                    Content Hash=${entry.content_hash.substr(0, 8)}..., 
-                    Current Hash=${entry.current_hash.substr(0, 8)}..., 
-                    Nonce=${entry.nonce}, 
-                    Timestamp=${formattedDate}, 
-                    Difficulty=${entry.difficulty},
-                    Edit Count=${entry.editCount},
-                    OpenTimestamps: ${timestampStatus}`;
-                this.proofsList.appendChild(listItem);
-            });
+            const history = this.merkleTree.getHistory();
+            this.proofsList.innerHTML = history.map((entry, index) => `
+                <li class="p-2 bg-gray-100 rounded">
+                    <div>Edit ${index + 1}</div>
+                    <div>Time: ${new Date(entry.metadata.timestamp).toISOString()}</div>
+                    <div>Hash: ${entry.hash.substring(0, 8)}...</div>
+                    ${entry.metadata.powResult ? `
+                        <div>PoW: Nonce=${entry.metadata.powResult.nonce}</div>
+                        <div>Duration: ${entry.metadata.powResult.duration.toFixed(2)}ms</div>
+                    ` : ''}
+                    ${entry.metadata.editStats ? `
+                        <div>Typing Analysis:</div>
+                        <div>• Speed: ${entry.metadata.editStats.charsPerMinute.toFixed(2)} chars/min</div>
+                        <div>• Mean Interval: ${entry.metadata.editStats.geometricMeanInterval?.toFixed(2) || 'N/A'} ms</div>
+                        <div>• Total Edits: ${entry.metadata.editStats.totalEdits}</div>
+                    ` : ''}
+                </li>
+            `).join('');
         }
 
-        /**
-         * Update the document content display
-         */
         updateContentDisplay() {
             const textContent = this.quill.getText();
             this.contentDisplay.textContent = textContent.trim() || 'No content yet...';
         }
 
-        /**
-         * Disable UI buttons during processing
-         */
         disableUI() {
             this.verifyBtn.disabled = true;
             this.serializeBtn.disabled = true;
             this.deserializeBtn.disabled = true;
             this.timestampBtn.disabled = true;
+            this.newDocBtn.disabled = true;
         }
 
-        /**
-         * Enable UI buttons after processing
-         */
         enableUI() {
             this.verifyBtn.disabled = false;
             this.serializeBtn.disabled = false;
             this.deserializeBtn.disabled = false;
             this.timestampBtn.disabled = false;
+            this.newDocBtn.disabled = false;
         }
     }
 
-// Initialize the BitQuill application once the DOM is fully loaded
-document.addEventListener('DOMContentLoaded', () => {
-    console.log('DOM fully loaded, initializing BitQuillApp...');
-    try {
-        const app = new BitQuillApp();
-        app.init();
-        console.log('BitQuillApp initialized successfully');
-    } catch (error) {
-        console.error('Error initializing BitQuillApp:', error);
-        document.getElementById('status').textContent = 'Failed to initialize the application. Please check the console for more information.';
-        document.getElementById('status').className = 'status error';
-    }
-});
-</script>
+    // Initialize the BitQuill application
+    document.addEventListener('DOMContentLoaded', () => {
+        console.log('Initializing BitQuill...');
+        try {
+            const app = new BitQuillApp();
+            app.init();
+            console.log('BitQuill initialized successfully');
+        } catch (error) {
+            console.error('BitQuill initialization error:', error);
+            document.getElementById('status').textContent = 
+                'Failed to initialize BitQuill. Check console for details.';
+            document.getElementById('status').className = 'status error';
+        }
+    });
+    </script>
 
 </html>
