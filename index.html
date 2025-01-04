@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
-    BitQuill - Secure Rich Text Editor
-    Copyright (C) 2024 Nick @Ciphernom on X
+    BitQuill - Secure Rich Text Editor with Delta-Based Merkle Tree Implementation
+    Copyright (C) 2024 Nick @Ciphernom
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -12,9 +12,6 @@
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
     Contact information:
     Nick @Ciphernom on X
@@ -182,6 +179,9 @@
      * A secure rich text editor with Merkle tree integrity and edit pattern analysis
      */
 
+    // Declare Delta globally
+    let Delta;
+
     class EditAnalyzer {
         constructor() {
             this.editHistory = [];
@@ -195,7 +195,7 @@
                 // Pattern detection
                 fastBurstThreshold: 80,       // Fastest acceptable typing interval in ms
                 burstVariance: 20,            // Expected variance in typing speed
-                consistentPatternWindow: 10,   // Number of keystrokes to check for patterns
+                consistentPatternWindow: 10,  // Number of keystrokes to check for patterns
                 maxConsistentCount: 5,        // Maximum allowable identical intervals
                 
                 // Text characteristics
@@ -213,15 +213,14 @@
             this.lastWordBoundary = 0;        // Track word breaks
         }
 
-        recordEdit(content, prevContent, timestamp) {
+        recordEdit(newDelta, prevDelta, timestamp) {
             const timeSinceLastEdit = this.editHistory.length > 0 ? 
                 timestamp - this.editHistory[this.editHistory.length - 1].timestamp : null;
 
             const metrics = {
                 timestamp,
-                content,
-                length: content.length,
-                changeSize: prevContent ? Math.abs(content.length - prevContent.length) : content.length,
+                delta: newDelta,
+                changeSize: this.calculateDeltaSize(newDelta),
                 timeSinceLastEdit
             };
 
@@ -238,6 +237,20 @@
 
             this.editHistory.push(metrics);
             return this.analyzeEdit(metrics);
+        }
+
+        calculateDeltaSize(delta) {
+            let size = 0;
+            delta.ops.forEach(op => {
+                if (op.insert) {
+                    if (typeof op.insert === 'string') {
+                        size += op.insert.length;
+                    } else {
+                        size += 1; // For embeds like images
+                    }
+                }
+            });
+            return size;
         }
 
         analyzeTypingPattern(newInterval) {
@@ -263,6 +276,7 @@
 
             return !tooFast && !tooConsistent && !noNaturalPauses;
         }
+
         checkConsistency(intervals) {
             let consistentCount = 1;
             const variance = this.thresholds.burstVariance;
@@ -337,9 +351,9 @@
     }
 
     class MerkleNode {
-        constructor(hash, content, metadata = null, left = null, right = null) {
+        constructor(hash, delta, metadata = null, left = null, right = null) {
             this.hash = hash;
-            this.content = content;    // Store actual content in leaf nodes
+            this.delta = delta;    // Store delta instead of content
             this.metadata = metadata;  // Stores timestamp, PoW results, edit stats
             this.left = left;
             this.right = right;
@@ -347,31 +361,50 @@
     }
 
     class EnhancedMerkleTree {
-        constructor() {
+        constructor(DeltaClass) {
             this.leaves = [];
             this.root = null;
             this.pendingTimestamps = new Map();
+            this.documentState = new DeltaClass(); // Initialize with an empty Delta
+            this.checkpoints = {}; // For optimized reconstruction
         }
 
-        async addLeaf(content, metadata) {
-            const contentHash = await this.computeHash(content);
-            const leaf = new MerkleNode(contentHash, content, metadata);
+        async addLeaf(delta, metadata) {
+            const deltaString = JSON.stringify(delta);
+            const deltaHash = await this.computeHash(deltaString);
+            const leaf = new MerkleNode(deltaHash, delta, metadata);
             this.leaves.push(leaf);
+            await this.applyDelta(delta);
             await this.rebuildTree();
             
             const proof = await this.getProof(this.leaves.length - 1);
             
-            if (this.leaves.length % 100 === 0) {
-                this.createOpenTimestamp(this.root.hash).then(timestamp => {
-                    this.pendingTimestamps.set(this.root.hash, timestamp);
-                });
+            // Create a checkpoint every 100 edits
+            const checkpointInterval = 100;
+            if (this.leaves.length % checkpointInterval === 0) {
+                this.checkpoints[this.leaves.length] = this.documentState.ops;
+                const rootHash = this.root ? this.root.hash : null;
+                if (rootHash) {
+                    this.createOpenTimestamp(rootHash).then(timestamp => {
+                        this.pendingTimestamps.set(rootHash, timestamp);
+                    });
+                }
             }
             
             return {
                 leaf: leaf,
                 proof: proof,
-                rootHash: this.root.hash
+                rootHash: this.root ? this.root.hash : null
             };
+        }
+
+        async applyDelta(delta) {
+            const quillDelta = new Delta(delta);
+            this.documentState = this.documentState.compose(quillDelta);
+        }
+
+        getCurrentContent() {
+            return this.documentState.ops;
         }
 
         async rebuildTree() {
@@ -414,105 +447,130 @@
         }
     
 
-    async getProof(index) {
-        if (!this.root || index >= this.leaves.length) {
-            return null;
-        }
-
-        const proof = [];
-        let currentIndex = index;
-        let currentLevel = [...this.leaves];
-
-        while (currentLevel.length > 1) {
-            const isOdd = currentIndex % 2 === 1;
-            const pairIndex = isOdd ? currentIndex - 1 : currentIndex + 1;
-            
-            // Add sibling to proof if it exists
-            if (pairIndex < currentLevel.length) {
-                proof.push({
-                    hash: currentLevel[pairIndex].hash,
-                    position: isOdd ? 'left' : 'right'
-                });
-            } else if (currentIndex % 2 === 0) {
-                // If we're at a right edge, use self as the pair
-                proof.push({
-                    hash: currentLevel[currentIndex].hash,
-                    position: 'right'
-                });
+        async getProof(index) {
+            if (!this.root || index >= this.leaves.length) {
+                return null;
             }
 
-            // Build next level
-            const nextLevel = [];
-            for (let i = 0; i < currentLevel.length; i += 2) {
-                const leftNode = currentLevel[i];
-                const rightNode = i + 1 < currentLevel.length ? currentLevel[i + 1] : leftNode;
+            const proof = [];
+            let currentIndex = index;
+            let currentLevel = [...this.leaves];
+
+            while (currentLevel.length > 1) {
+                const isOdd = currentIndex % 2 === 1;
+                const pairIndex = isOdd ? currentIndex - 1 : currentIndex + 1;
                 
-                const combinedHash = await this.computeHash(leftNode.hash + rightNode.hash);
-                
-                nextLevel.push(new MerkleNode(
-                    combinedHash,
-                    null,
-                    {
-                        level: Math.floor(currentLevel.length / 2),
-                        leftHash: leftNode.hash,
-                        rightHash: rightNode.hash
-                    },
-                    leftNode,
-                    rightNode
-                ));
-            }
-
-            // Update for next iteration
-            currentLevel = nextLevel;
-            currentIndex = Math.floor(currentIndex / 2);
-        }
-
-        return {
-            proof: proof,
-            rootHash: this.root.hash,
-            metadata: this.leaves[index].metadata
-        };
-    }
-
-        async verifyProof(content, proof) {
-            try {
-                // Compute the hash of the content
-                let currentHash = await this.computeHash(content);
-
-                console.log('Starting verification:');
-                console.log('Content hash:', currentHash);
-                console.log('Expected root:', proof.rootHash);
-                console.log('Proof steps:', proof.proof);
-
-                // Verify each step in the proof
-                for (const { hash, position } of proof.proof) {
-                    // Await the hash computation at each step
-                    currentHash = await this.computeHash(
-                        position === 'left' ? 
-                            hash + currentHash : 
-                            currentHash + hash
-                    );
-                    
-                    console.log(`Step (${position}):`, {
-                        pair: position === 'left' ? [hash, currentHash] : [currentHash, hash],
-                        resultHash: currentHash
+                // Add sibling to proof if it exists
+                if (pairIndex < currentLevel.length) {
+                    proof.push({
+                        hash: currentLevel[pairIndex].hash,
+                        position: isOdd ? 'left' : 'right'
+                    });
+                } else if (currentIndex % 2 === 0) {
+                    // If we're at a right edge, use self as the pair
+                    proof.push({
+                        hash: currentLevel[currentIndex].hash,
+                        position: 'right'
                     });
                 }
 
-                const valid = currentHash === proof.rootHash;
-                const timestamp = valid ? await this.verifyOpenTimestamp(proof.rootHash) : null;
+                // Build next level
+                const nextLevel = [];
+                for (let i = 0; i < currentLevel.length; i += 2) {
+                    const leftNode = currentLevel[i];
+                    const rightNode = i + 1 < currentLevel.length ? currentLevel[i + 1] : leftNode;
+                    
+                    const combinedHash = await this.computeHash(leftNode.hash + rightNode.hash);
+                    
+                    nextLevel.push(new MerkleNode(
+                        combinedHash,
+                        null,
+                        {
+                            level: Math.floor(currentLevel.length / 2),
+                            leftHash: leftNode.hash,
+                            rightHash: rightNode.hash
+                        },
+                        leftNode,
+                        rightNode
+                    ));
+                }
 
-                console.log('Verification result:', {
-                    valid,
-                    finalHash: currentHash,
-                    expectedHash: proof.rootHash
-                });
-
-                return { valid, timestamp };
-            } catch (error) {
-                console.error('Verification error:', error);
-                return { valid: false, timestamp: null, error: error.message };
+                // Update for next iteration
+                currentLevel = nextLevel;
+                currentIndex = Math.floor(currentIndex / 2);
             }
+
+            return {
+                proof: proof,
+                rootHash: this.root.hash,
+                metadata: this.leaves[index].metadata
+            };
+        }
+
+        async verifyProof(index) {
+            const proof = await this.getProof(index);
+            if (!proof) return { valid: false, timestamp: null };
+
+            // Start with the hash of the delta at the given index
+            const entry = this.leaves[index];
+            let currentHash = entry.hash;
+
+            console.log('Starting verification:');
+            console.log('Initial hash:', currentHash);
+            console.log('Expected root:', proof.rootHash);
+            console.log('Proof steps:', proof.proof);
+
+            // Apply each step in the proof
+            for (const { hash, position } of proof.proof) {
+                if (position === 'left') {
+                    currentHash = await this.computeHash(hash + currentHash);
+                } else {
+                    currentHash = await this.computeHash(currentHash + hash);
+                }
+                console.log(`After ${position} pairing: ${currentHash}`);
+            }
+
+            const valid = currentHash === proof.rootHash;
+            const timestamp = valid ? await this.verifyOpenTimestamp(proof.rootHash) : null;
+
+            console.log('Verification result:', {
+                valid,
+                finalHash: currentHash,
+                expectedHash: proof.rootHash
+            });
+
+            return { valid, timestamp };
+        }
+
+        reconstructDocument(upToIndex = this.leaves.length) {
+            let reconstructedDelta = new Delta();
+
+            // Find the nearest checkpoint
+            const checkpointIndices = Object.keys(this.checkpoints).map(Number).sort((a, b) => a - b);
+            let lastCheckpoint = 0;
+            for (const idx of checkpointIndices) {
+                if (idx <= upToIndex) {
+                    reconstructedDelta = new Delta(this.checkpoints[idx]);
+                    lastCheckpoint = idx;
+                } else {
+                    break;
+                }
+            }
+
+            // Apply deltas from the last checkpoint
+            for (let i = lastCheckpoint; i < upToIndex; i++) {
+                const delta = new Delta(this.leaves[i].delta);
+                reconstructedDelta = reconstructedDelta.compose(delta);
+            }
+
+            return reconstructedDelta;
+        }
+
+        updateContentDisplay(contentDisplayElement) {
+            const reconstructedDelta = this.reconstructDocument();
+            const tempQuill = new Quill(document.createElement('div'));
+            tempQuill.setContents(reconstructedDelta);
+            contentDisplayElement.innerHTML = tempQuill.root.innerHTML || 'No content yet...';
         }
 
         async computeHash(data) {
@@ -566,7 +624,7 @@
 
         getHistory() {
             return this.leaves.map(leaf => ({
-                content: leaf.content,
+                delta: leaf.delta,
                 metadata: leaf.metadata,
                 hash: leaf.hash,
                 timestamp: leaf.metadata.timestamp
@@ -576,10 +634,11 @@
         async serialize() {
             return JSON.stringify({
                 leaves: this.leaves.map(leaf => ({
-                    content: leaf.content,
+                    delta: leaf.delta,
                     metadata: leaf.metadata,
                     hash: leaf.hash
                 })),
+                checkpoints: this.checkpoints,
                 timestamps: Array.from(this.pendingTimestamps.entries())
             });
         }
@@ -591,13 +650,21 @@
             for (const leafData of data.leaves) {
                 const leaf = new MerkleNode(
                     leafData.hash,
-                    leafData.content,
+                    leafData.delta,
                     leafData.metadata
                 );
                 this.leaves.push(leaf);
             }
 
-            this.pendingTimestamps = new Map(data.timestamps);
+            this.checkpoints = data.checkpoints || {};
+            this.pendingTimestamps = new Map(data.timestamps || []);
+            this.documentState = new Delta();
+
+            // Reconstruct document state
+            for (let i = 0; i < this.leaves.length; i++) {
+                await this.applyDelta(this.leaves[i].delta);
+            }
+
             await this.rebuildTree();
             
             return this.root !== null;
@@ -624,8 +691,8 @@
             // Core components
             this.quill = null;
             this.editAnalyzer = new EditAnalyzer();
-            this.merkleTree = new EnhancedMerkleTree();
-            this.lastContent = '';
+            this.merkleTree = null; // Will be instantiated after Delta is defined
+            this.lastContent = null; // Will be set after initialization
             
             // PoW configuration
             this.powConfig = {
@@ -634,10 +701,10 @@
                 current: 1,
                 adjustmentInterval: 2016,   // Match Bitcoin's adjustment interval, for spiritual reasons
                 targetEditInterval: 200,    // Target typing speed: 200ms per character
-                maxAdjustmentFactor: 4,    // Max 4x difficulty change either direction
+                maxAdjustmentFactor: 4,     // Max 4x difficulty change either direction
                 // For analyzing typing patterns
-                windowSize: 50,            // Rolling window for speed analysis
-                minSampleSize: 5           // Minimum samples needed
+                windowSize: 50,             // Rolling window for speed analysis
+                minSampleSize: 5            // Minimum samples needed
             };
             
             // Initialize Web Worker for PoW
@@ -674,9 +741,18 @@
                     }
                 });
 
+                // Retrieve Quill's Delta class
+                Delta = Quill.import('delta');
+
+                // Instantiate MerkleTree after Delta is defined
+                this.merkleTree = new EnhancedMerkleTree(Delta);
+
+                // Initialize lastContent
+                this.lastContent = this.quill.getContents();
+
                 this.quill.on('text-change', (delta, oldDelta, source) => {
                     if (source === 'user') {
-                        this.handleEdit(delta);
+                        this.handleEdit(delta, oldDelta);
                     }
                 });
 
@@ -698,23 +774,23 @@
 
         async initializeDocument() {
             try {
-                const initialContent = this.quill.root.innerHTML;
+                const initialDelta = this.quill.getContents();
                 const timestamp = Date.now();
                 
-                // Initialize with empty content as previous
-                const editAnalysis = this.editAnalyzer.recordEdit(initialContent, '', timestamp);
+                // Initialize with empty delta as previous
+                const editAnalysis = this.editAnalyzer.recordEdit(initialDelta, this.lastContent, timestamp);
                 
                 // Perform initial PoW
-                const powResult = await this.performProofOfWork(initialContent, this.powConfig.current);
+                const powResult = await this.performProofOfWork(JSON.stringify(initialDelta), this.powConfig.current);
                 
-                const merkleResult = await this.merkleTree.addLeaf(initialContent, {
+                const merkleResult = await this.merkleTree.addLeaf(initialDelta, {
                     timestamp,
                     editStats: this.editAnalyzer.getEditStats(),
                     powResult: powResult,  // Include PoW result
                     isGenesis: true
                 });
 
-                this.lastContent = initialContent;
+                this.lastContent = initialDelta;
                 this.updateUIAfterEdit('Document initialized', 'success');
                 this.verifyBtn.disabled = false;
 
@@ -729,29 +805,29 @@
             }
         }
 
-        async handleEdit(delta) {
-            const currentContent = this.quill.root.innerHTML;
+        async handleEdit(delta, oldDelta) {
+            const currentDelta = this.quill.getContents();
             const timestamp = Date.now();
 
             try {
-// Analyze edit patterns
-                const editAnalysis = this.editAnalyzer.recordEdit(currentContent, this.lastContent, timestamp);
+                // Analyze edit patterns using delta information
+                const editAnalysis = this.editAnalyzer.recordEdit(delta, this.lastContent, timestamp);
                 
                 if (!editAnalysis.isValid) {
                     throw new Error(`Suspicious edit pattern: ${editAnalysis.patterns.join(', ')}`);
                 }
 
-                // Perform proof of work
-                const powResult = await this.performProofOfWork(currentContent, this.powConfig.current);
+                // Perform proof of work on the delta
+                const powResult = await this.performProofOfWork(JSON.stringify(delta), this.powConfig.current);
 
-                // Add to Merkle tree with metadata
-                const merkleResult = await this.merkleTree.addLeaf(currentContent, {
+                // Add delta to Merkle tree with metadata
+                const merkleResult = await this.merkleTree.addLeaf(delta, {
                     timestamp,
                     editStats: this.editAnalyzer.getEditStats(),
                     powResult: powResult
                 });
 
-                this.lastContent = currentContent;
+                this.lastContent = currentDelta;
                 
                 // Adjust PoW difficulty
                 if (this.editAnalyzer.getEditStats().totalEdits % this.powConfig.adjustmentInterval === 0) {
@@ -774,7 +850,7 @@
             const workerScript = `
                 self.addEventListener('message', async (event) => {
                     const { content, difficulty } = event.data;
-                    const startTime = Date.now();  // Use Date.now() instead of performance.now()
+                    const startTime = Date.now(); // Record start time
                     let nonce = 0;
                     const target = '0'.repeat(difficulty);
 
@@ -787,11 +863,12 @@
                         const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
                         if (hashHex.startsWith(target)) {
+                            const duration = Date.now() - startTime; // Calculate duration
                             self.postMessage({ 
                                 type: 'POW_RESULT', 
                                 nonce: nonce, 
                                 hash: hashHex,
-                                duration: Date.now() - startTime  // Calculate duration here
+                                duration: duration // Include duration
                             });
                             break;
                         }
@@ -818,14 +895,12 @@
             this.worker = new Worker(workerUrl);
         }
 
-        performProofOfWork(content, difficulty) {
+        async performProofOfWork(content, difficulty) {
             return new Promise((resolve, reject) => {
-                const startTime = performance.now();
-                
                 this.worker.onmessage = (event) => {
                     const { type, nonce, hash, duration, message } = event.data;
                     if (type === 'POW_RESULT') {
-                        resolve({ nonce, hash, duration });
+                        resolve({ nonce, hash, duration }); // Include duration
                     } else if (type === 'POW_ERROR') {
                         reject(new Error(message));
                     }
@@ -833,8 +908,7 @@
 
                 this.worker.postMessage({ 
                     content, 
-                    difficulty,
-                    startTime
+                    difficulty
                 });
             });
         }
@@ -889,8 +963,8 @@
         }
 
         async manualTimestamp() {
-            const currentContent = this.quill.root.innerHTML;
-            const contentHash = await this.merkleTree.computeHash(currentContent);
+            const currentContent = this.merkleTree.getCurrentContent();
+            const contentHash = await this.merkleTree.computeHash(JSON.stringify(currentContent));
             
             this.updateStatus('Creating manual timestamp...', 'info');
             const timestamp = await this.merkleTree.createOpenTimestamp(contentHash);
@@ -905,9 +979,9 @@
 
         async newDocument() {
             this.quill.setText('');
-            this.merkleTree = new EnhancedMerkleTree();
+            this.merkleTree = new EnhancedMerkleTree(Delta);
             this.editAnalyzer = new EditAnalyzer();
-            this.lastContent = '';
+            this.lastContent = this.quill.getContents();
             this.powConfig.current = this.powConfig.min;
 
             await this.initializeDocument();
@@ -962,16 +1036,17 @@
                 if (success) {
                     const history = this.merkleTree.getHistory();
                     if (history.length > 0) {
-                        const lastEdit = history[history.length - 1];
-                        this.quill.setContents(
-                            this.quill.clipboard.convert(lastEdit.content),
-                            'silent'
-                        );
-                        this.lastContent = lastEdit.content;
+                        const reconstructedDelta = this.merkleTree.reconstructDocument();
+                        this.quill.setContents(reconstructedDelta, 'silent');
+                        this.lastContent = reconstructedDelta;
                     }
 
                     this.updateStatus('Document deserialized successfully', 'success');
                     this.updateUIAfterEdit('Document loaded', 'success');
+
+                    // **Update the UI sections**
+                    this.updateProofsDisplay();
+                    this.updateContentDisplay();
                 } else {
                     throw new Error('Failed to deserialize document');
                 }
@@ -999,11 +1074,11 @@
                     const proof = await this.merkleTree.getProof(i);  // Use index directly
                     
                     if (!proof) {
-                        this.updateStatus(`Verification failed: Missing proof for edit ${i}`, 'error');
+                        this.updateStatus(`Verification failed: Missing proof for edit ${i + 1}`, 'error');
                         return;
                     }
 
-                    const verification = await this.merkleTree.verifyProof(entry.content, proof);
+                    const verification = await this.merkleTree.verifyProof(i);
                     
                     if (!verification.valid) {
                         this.updateStatus(`Verification failed at edit ${i + 1}`, 'error');
@@ -1046,26 +1121,25 @@
             const history = this.merkleTree.getHistory();
             this.proofsList.innerHTML = history.map((entry, index) => `
                 <li class="p-2 bg-gray-100 rounded">
-                    <div>Edit ${index + 1}</div>
+                    <div><strong>Edit ${index + 1}</strong></div>
                     <div>Time: ${new Date(entry.metadata.timestamp).toISOString()}</div>
                     <div>Hash: ${entry.hash.substring(0, 8)}...</div>
                     ${entry.metadata.powResult ? `
                         <div>PoW: Nonce=${entry.metadata.powResult.nonce}</div>
-                        <div>Duration: ${entry.metadata.powResult.duration.toFixed(2)}ms</div>
+                        <div>Duration: ${entry.metadata.powResult.duration ? entry.metadata.powResult.duration.toFixed(2) + 'ms' : 'N/A'}</div>
                     ` : ''}
                     ${entry.metadata.editStats ? `
                         <div>Typing Analysis:</div>
-                        <div>• Speed: ${entry.metadata.editStats.charsPerMinute.toFixed(2)} chars/min</div>
-                        <div>• Mean Interval: ${entry.metadata.editStats.geometricMeanInterval?.toFixed(2) || 'N/A'} ms</div>
-                        <div>• Total Edits: ${entry.metadata.editStats.totalEdits}</div>
+                        <div>• Speed: ${entry.metadata.editStats.charsPerMinute !== undefined ? entry.metadata.editStats.charsPerMinute.toFixed(2) + ' chars/min' : 'N/A'}</div>
+                        <div>• Mean Interval: ${entry.metadata.editStats.geometricMeanInterval !== null && entry.metadata.editStats.geometricMeanInterval !== undefined ? entry.metadata.editStats.geometricMeanInterval.toFixed(2) + ' ms' : 'N/A'}</div>
+                        <div>• Total Edits: ${entry.metadata.editStats.totalEdits !== undefined ? entry.metadata.editStats.totalEdits : 'N/A'}</div>
                     ` : ''}
                 </li>
             `).join('');
         }
 
         updateContentDisplay() {
-            const textContent = this.quill.getText();
-            this.contentDisplay.textContent = textContent.trim() || 'No content yet...';
+            this.merkleTree.updateContentDisplay(this.contentDisplay);
         }
 
         disableUI() {
@@ -1101,4 +1175,5 @@
     });
     </script>
 
+</body>
 </html>
