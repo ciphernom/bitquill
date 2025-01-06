@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!--
-    BitQuill - Secure Rich Text Editor with Delta-Based Merkle Tree Implementation
+    BitQuill - Digital Observer Protocol Editor with Delta-Based Merkle Tree Implementation
     Copyright (C) 2024 Nick @Ciphernom
 
     This program is free software: you can redistribute it and/or modify
@@ -27,7 +27,7 @@
     we will need to add CSP 'ron:    
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.quilljs.com https://opentimestamps.org; style-src 'self' 'unsafe-inline' https://cdn.quilljs.com; img-src 'self' data:;">
     -->
-    <title>BitQuill - Secure Rich Text Editor</title>
+    <title>BitQuill - Digital Observer Protocol Editor</title>
     <!-- Include Quill stylesheet from CDN -->
     <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
     <style>
@@ -48,7 +48,7 @@
             text-align: center;
         }
         #editor-container {
-            height: 300px;
+            height: 600px;
         }
         .section {
             margin-top: 30px;
@@ -68,6 +68,37 @@
             background-color: #ccc;
             cursor: not-allowed;
         }
+        .ql-snow .ql-toolbar button.ql-table {
+            width: auto;
+            padding: 3px 5px;
+        }
+
+        .ql-snow .ql-toolbar button.ql-table::after {
+            content: 'Table';
+            font-size: 14px;
+            display: inline-block;
+        }
+
+        /* Add these table styles */
+        .ql-editor table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1em;
+        }
+
+        .ql-editor table td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            min-width: 50px;
+            height: 20px;
+            vertical-align: top;
+        }
+
+        .ql-editor table td p {
+            margin: 0;
+            padding: 0;
+        }
+        
         #status {
             margin-top: 20px;
             padding: 15px;
@@ -122,11 +153,10 @@
 </head>
 <body>
     <div class="container">
-        <h1>BitQuill - Secure Rich Text Editor</h1>
+        <h1>BitQuill - Digital Observer Protocol Editor</h1>
 
         <!-- Editor Section -->
         <div class="section">
-            <h2>Editor</h2>
             <div id="editor-container"></div>
             <div class="buttons">                
                 <button id="new-doc-btn">New Document</button>
@@ -134,7 +164,7 @@
                 <button id="serialize-btn">Serialize Document</button>
                 <button id="deserialize-btn">Deserialize Document</button>
                 <button id="timestamp-btn">Manual Timestamp</button>
-                <input type="file" id="file-input" accept=".json" style="display: none;">
+                <input type="file" id="file-input" accept=".bql,.bqlz" style="display: none;">
             </div>
             <div class="spinner" id="spinner" aria-hidden="true"></div>
         </div>
@@ -170,29 +200,41 @@
         </div>
     </div>
 
-    <!-- OpenTimestamps library -->
-    <script src="https://opentimestamps.org/assets/javascripts/vendor/opentimestamps.min.js"></script>
     
     <!-- Include Quill library from CDN -->
     <script src="https://cdn.quilljs.com/1.3.6/quill.js"></script>
+    <!-- OpenTimestamps library -->
+    <script src="https://opentimestamps.org/assets/javascripts/vendor/opentimestamps.min.js"></script>
 
 <!-- Main Application Script -->
-    <script>
+<script>
     /**
      * BitQuill Application
-     * A secure rich text editor with Merkle tree integrity and edit pattern analysis
+     * A digital observer protocol editor with Merkle tree integrity and edit pattern analysis.
+     * 
+     * @version 1.0.0
+     * @license MIT
      */
 
     // Declare Delta globally
     let Delta;
 
+    /**
+     * EditAnalyzer
+     * Analyzes edit patterns to ensure natural typing behavior and detect suspicious activities.
+     */
     class EditAnalyzer {
+        /**
+         * Creates an instance of EditAnalyzer.
+         */
         constructor() {
+            /** @type {Array<Object>} */
             this.editHistory = [];
             
+            /** @type {Object} */
             this.thresholds = {
                 // Basic human typing parameters
-                baseTypingInterval: 100,      // Baseline IKI (inter-key interval) in ms
+                baseTypingInterval: 100,      // Baseline Inter-Key Interval (IKI) in ms
                 thinkingTime: 500,            // Average pause for thinking in ms
                 wordBoundaryPause: 200,       // Natural pause between words in ms
                 
@@ -212,11 +254,24 @@
                 minSampleSize: 5              // Minimum samples for pattern detection
             };
             
+            /** @type {Array<number>} */
             this.intervalHistory = [];        // Store timing between edits
+            
+            /** @type {Array<number>} */
             this.patternBuffer = [];          // Recent typing patterns
+            
+            /** @type {number} */
             this.lastWordBoundary = 0;        // Track word breaks
         }
 
+        /**
+         * Records a new edit and analyzes its validity based on typing patterns.
+         * 
+         * @param {Delta} newDelta - The new delta representing the edit.
+         * @param {Delta} prevDelta - The previous delta before the edit.
+         * @param {number} timestamp - The timestamp when the edit occurred.
+         * @returns {Object} - Analysis result indicating validity and detected patterns.
+         */
         recordEdit(newDelta, prevDelta, timestamp) {
             const timeSinceLastEdit = this.editHistory.length > 0 ? 
                 timestamp - this.editHistory[this.editHistory.length - 1].timestamp : null;
@@ -243,6 +298,12 @@
             return this.analyzeEdit(metrics);
         }
 
+        /**
+         * Calculates the size of a delta based on its operations.
+         * 
+         * @param {Delta} delta - The delta to calculate size for.
+         * @returns {number} - The total size of the delta.
+         */
         calculateDeltaSize(delta) {
             let size = 0;
             delta.ops.forEach(op => {
@@ -257,6 +318,12 @@
             return size;
         }
 
+        /**
+         * Analyzes the typing pattern based on the interval since the last edit.
+         * 
+         * @param {number} newInterval - The time since the last edit in ms.
+         * @returns {boolean} - True if typing pattern is natural, else false.
+         */
         analyzeTypingPattern(newInterval) {
             // Store interval
             this.intervalHistory.push(newInterval);
@@ -281,6 +348,12 @@
             return !tooFast && !tooConsistent && !noNaturalPauses;
         }
 
+        /**
+         * Checks if the typing intervals are too consistent, indicating potential automation.
+         * 
+         * @param {Array<number>} intervals - The recent typing intervals.
+         * @returns {boolean} - True if intervals are too consistent, else false.
+         */
         checkConsistency(intervals) {
             let consistentCount = 1;
             const variance = this.thresholds.burstVariance;
@@ -298,6 +371,11 @@
             return false;
         }
 
+        /**
+         * Checks if the typing pattern includes natural pauses, such as word boundaries.
+         * 
+         * @returns {boolean} - True if natural pause patterns are missing, else false.
+         */
         checkPausePattern() {
             const recentTotal = this.intervalHistory.slice(-this.thresholds.windowSize)
                 .reduce((sum, interval) => sum + interval, 0);
@@ -312,6 +390,12 @@
             return pauseCount < (this.thresholds.windowSize / this.thresholds.maxWordLength);
         }
 
+        /**
+         * Analyzes the edit metrics to detect suspicious patterns.
+         * 
+         * @param {Object} metrics - The metrics of the current edit.
+         * @returns {Object} - Analysis result indicating validity and detected patterns.
+         */
         analyzeEdit(metrics) {
             const suspiciousPatterns = [];
 
@@ -331,6 +415,11 @@
             };
         }
 
+        /**
+         * Retrieves statistics about the edits performed.
+         * 
+         * @returns {Object|null} - Object containing edit statistics or null if no edits.
+         */
         getEditStats() {
             if (this.editHistory.length === 0) return null;
 
@@ -354,25 +443,73 @@
         }
     }
 
+    /**
+     * MerkleNode
+     * Represents a node in the Merkle Tree, storing hash, delta, metadata, and child nodes.
+     */
     class MerkleNode {
+        /**
+         * Creates an instance of MerkleNode.
+         * 
+         * @param {string} hash - The hash of the node.
+         * @param {Delta|null} delta - The delta associated with the node (null for internal nodes).
+         * @param {Object|null} metadata - Additional metadata such as timestamp and PoW results.
+         * @param {MerkleNode|null} left - Left child node.
+         * @param {MerkleNode|null} right - Right child node.
+         */
         constructor(hash, delta, metadata = null, left = null, right = null) {
+            /** @type {string} */
             this.hash = hash;
+            
+            /** @type {Delta|null} */
             this.delta = delta;    // Store delta instead of content
+            
+            /** @type {Object|null} */
             this.metadata = metadata;  // Stores timestamp, PoW results, edit stats
+            
+            /** @type {MerkleNode|null} */
             this.left = left;
+            
+            /** @type {MerkleNode|null} */
             this.right = right;
         }
     }
 
+    /**
+     * EnhancedMerkleTree
+     * Manages the Merkle Tree structure, including adding leaves, rebuilding the tree,
+     * generating proofs, verifying proofs, and handling serialization.
+     */
     class EnhancedMerkleTree {
+        /**
+         * Creates an instance of EnhancedMerkleTree.
+         * 
+         * @param {Class} DeltaClass - The Delta class from Quill for composing document states.
+         */
         constructor(DeltaClass) {
+            /** @type {Array<MerkleNode>} */
             this.leaves = [];
+            
+            /** @type {MerkleNode|null} */
             this.root = null;
+            
+            /** @type {Map<string, any>} */
             this.pendingTimestamps = new Map();
+            
+            /** @type {Delta} */
             this.documentState = new DeltaClass(); // Initialize with an empty Delta
+            
+            /** @type {Object} */
             this.checkpoints = {}; // For optimized reconstruction
         }
 
+        /**
+         * Adds a new leaf to the Merkle Tree with the given delta and metadata.
+         * 
+         * @param {Delta} delta - The delta representing the edit.
+         * @param {Object} metadata - Metadata associated with the edit.
+         * @returns {Promise<Object>} - Contains the new leaf, proof, and root hash.
+         */
         async addLeaf(delta, metadata) {
             const deltaString = JSON.stringify(delta);
             const deltaHash = await this.computeHash(deltaString);
@@ -402,15 +539,31 @@
             };
         }
 
+        /**
+         * Applies a delta to the current document state.
+         * 
+         * @param {Delta} delta - The delta to apply.
+         * @returns {Promise<void>}
+         */
         async applyDelta(delta) {
             const quillDelta = new Delta(delta);
             this.documentState = this.documentState.compose(quillDelta);
         }
 
+        /**
+         * Retrieves the current content of the document.
+         * 
+         * @returns {Array<Object>} - The operations constituting the document.
+         */
         getCurrentContent() {
             return this.documentState.ops;
         }
 
+        /**
+         * Rebuilds the entire Merkle Tree based on the current leaves.
+         * 
+         * @returns {Promise<void>}
+         */
         async rebuildTree() {
             if (this.leaves.length === 0) {
                 this.root = null;
@@ -449,8 +602,13 @@
             this.root = nodes[0];
             console.log('Tree rebuilt. Root hash:', this.root.hash);
         }
-    
 
+        /**
+         * Generates a Merkle proof for a given leaf index.
+         * 
+         * @param {number} index - The index of the leaf to generate proof for.
+         * @returns {Promise<Object|null>} - The proof object or null if invalid index.
+         */
         async getProof(index) {
             if (!this.root || index >= this.leaves.length) {
                 return null;
@@ -511,6 +669,12 @@
             };
         }
 
+        /**
+         * Verifies the Merkle proof for a given leaf index.
+         * 
+         * @param {number} index - The index of the leaf to verify.
+         * @returns {Promise<Object>} - Verification result with validity and timestamp.
+         */
         async verifyProof(index) {
             const proof = await this.getProof(index);
             if (!proof) return { valid: false, timestamp: null };
@@ -546,6 +710,13 @@
             return { valid, timestamp };
         }
 
+        /**
+         * Reconstructs the document up to a specified leaf index.
+         * Utilizes checkpoints for optimized performance.
+         * 
+         * @param {number} [upToIndex=this.leaves.length] - The leaf index up to which to reconstruct.
+         * @returns {Delta} - The reconstructed document delta.
+         */
         reconstructDocument(upToIndex = this.leaves.length) {
             let reconstructedDelta = new Delta();
 
@@ -570,6 +741,11 @@
             return reconstructedDelta;
         }
 
+        /**
+         * Updates the content display element with the current document state.
+         * 
+         * @param {HTMLElement} contentDisplayElement - The HTML element to display content in.
+         */
         updateContentDisplay(contentDisplayElement) {
             const reconstructedDelta = this.reconstructDocument();
             const tempQuill = new Quill(document.createElement('div'));
@@ -577,6 +753,13 @@
             contentDisplayElement.innerHTML = tempQuill.root.innerHTML || 'No content yet...';
         }
 
+        /**
+         * Computes the SHA-256 hash of the given data.
+         * 
+         * @param {string} data - The data to hash.
+         * @returns {Promise<string>} - The hexadecimal representation of the hash.
+         * @throws Will throw an error if hashing fails.
+         */
         async computeHash(data) {
             // If the input contains [object Promise], something went wrong
             if (data.includes('[object Promise]')) {
@@ -596,6 +779,12 @@
             return hash;
         }
 
+        /**
+         * Creates an OpenTimestamps timestamp for a given hash.
+         * 
+         * @param {string} hash - The hash to timestamp.
+         * @returns {Promise<Uint8Array|null>} - Serialized timestamp data or null on failure.
+         */
         async createOpenTimestamp(hash) {
             try {
                 const digest = OpenTimestamps.Utils.hexToBytes(hash);
@@ -611,6 +800,12 @@
             }
         }
 
+        /**
+         * Verifies an OpenTimestamps timestamp for a given hash.
+         * 
+         * @param {string} hash - The hash whose timestamp is to be verified.
+         * @returns {Promise<Date|null>} - The timestamp as a Date object or null if invalid.
+         */
         async verifyOpenTimestamp(hash) {
             const timestamp = this.pendingTimestamps.get(hash);
             if (!timestamp) return null;
@@ -626,6 +821,11 @@
             }
         }
 
+        /**
+         * Retrieves the history of all leaves in the Merkle Tree.
+         * 
+         * @returns {Array<Object>} - An array of leaf data including delta, metadata, hash, and timestamp.
+         */
         getHistory() {
             return this.leaves.map(leaf => ({
                 delta: leaf.delta,
@@ -635,6 +835,12 @@
             }));
         }
 
+        /**
+         * Serializes the Merkle Tree into a JSON string.
+         * Includes leaves, checkpoints, and pending timestamps.
+         * 
+         * @returns {Promise<string>} - The serialized JSON string.
+         */
         async serialize() {
             return JSON.stringify({
                 leaves: this.leaves.map(leaf => ({
@@ -647,6 +853,12 @@
             });
         }
 
+        /**
+         * Deserializes a JSON string to reconstruct the Merkle Tree.
+         * 
+         * @param {string} jsonString - The JSON string to deserialize.
+         * @returns {Promise<boolean>} - True if deserialization is successful, else false.
+         */
         async deserialize(jsonString) {
             const data = JSON.parse(jsonString);
             this.leaves = [];
@@ -675,30 +887,196 @@
         }
     }
 
+    // Register Quill formats and modules
+
+    /**
+     * TableCell
+     * Custom Quill blot for table cells (TD elements).
+     */
+    Quill.register('blots/block/table-cell', class TableCell extends Quill.import('blots/block') {
+        /** @type {string} */
+        static blotName = 'table-cell';
+        
+        /** @type {string} */
+        static tagName = 'TD';
+        
+        /** @type {Array} */
+        static allowedChildren = [Quill.import('blots/block'), Quill.import('blots/break'), Quill.import('blots/text')];
+
+        /**
+         * Creates a table cell element.
+         * 
+         * @param {*} value - The value to set.
+         * @returns {HTMLElement} - The created TD element.
+         */
+        static create(value) {
+            const node = super.create(value);
+            return node;
+        }
+
+        /**
+         * Formats the table cell.
+         * 
+         * @param {string} name - The name of the format.
+         * @param {*} value - The value of the format.
+         */
+        format(name, value) {
+            super.format(name, value);
+        }
+    });
+
+    /**
+     * TableRow
+     * Custom Quill blot for table rows (TR elements).
+     */
+    Quill.register('blots/container/table-row', class TableRow extends Quill.import('blots/container') {
+        /** @type {string} */
+        static blotName = 'table-row';
+        
+        /** @type {string} */
+        static tagName = 'TR';
+        
+        /** @type {Array} */
+        static allowedChildren = ['table-cell'];
+        
+        /**
+         * Optimizes the table row by merging with adjacent similar rows.
+         */
+        optimize() {
+            super.optimize();
+            let next = this.next;
+            if (next != null && next.prev === this &&
+                next.statics.blotName === this.statics.blotName &&
+                next.domNode.tagName === this.domNode.tagName) {
+                next.moveChildren(this);
+                next.remove();
+            }
+        }
+
+        /**
+         * Creates a table row element.
+         * 
+         * @param {*} value - The value to set.
+         * @returns {HTMLElement} - The created TR element.
+         */
+        static create(value) {
+            const node = super.create(value);
+            return node;
+        }
+    });
+
+    /**
+     * Table
+     * Custom Quill blot for tables (TABLE elements).
+     */
+    Quill.register('blots/container/table', class Table extends Quill.import('blots/container') {
+        /** @type {string} */
+        static blotName = 'table';
+        
+        /** @type {string} */
+        static tagName = 'TABLE';
+        
+        /** @type {Array} */
+        static allowedChildren = ['table-row'];
+        
+        /**
+         * Optimizes the table by merging with adjacent similar tables.
+         */
+        optimize() {
+            super.optimize();
+            let next = this.next;
+            if (next != null && next.prev === this &&
+                next.statics.blotName === this.statics.blotName &&
+                next.domNode.tagName === this.domNode.tagName) {
+                next.moveChildren(this);
+                next.remove();
+            }
+        }
+
+        /**
+         * Creates a table element.
+         * 
+         * @param {*} value - The value to set.
+         * @returns {HTMLElement} - The created TABLE element.
+         */
+        static create(value) {
+            const node = super.create(value);
+            node.setAttribute('contenteditable', true);
+            return node;
+        }
+    });
+
+    /**
+     * BitQuillApp
+     * The main application class managing the editor, Merkle tree, edit analysis,
+     * Proof of Work, serialization, deserialization, and UI interactions.
+     */
     class BitQuillApp {
+        /**
+         * Creates an instance of BitQuillApp.
+         */
         constructor() {
             // UI Elements
+            /** @type {HTMLElement} */
             this.editorContainer = document.getElementById('editor-container');
+            
+            /** @type {HTMLButtonElement} */
             this.newDocBtn = document.getElementById('new-doc-btn');
+            
+            /** @type {HTMLButtonElement} */
             this.verifyBtn = document.getElementById('verify-btn');
+            
+            /** @type {HTMLButtonElement} */
             this.serializeBtn = document.getElementById('serialize-btn');
+            
+            /** @type {HTMLButtonElement} */
             this.deserializeBtn = document.getElementById('deserialize-btn');
+            
+            /** @type {HTMLButtonElement} */
             this.timestampBtn = document.getElementById('timestamp-btn');
+            
+            /** @type {HTMLInputElement} */
             this.fileInput = document.getElementById('file-input');
+            
+            /** @type {HTMLElement} */
             this.statusDisplay = document.getElementById('status');
+            
+            /** @type {HTMLElement} */
             this.spinner = document.getElementById('spinner');
+            
+            /** @type {HTMLElement} */
             this.documentHashDisplay = document.getElementById('document-hash');
+            
+            /** @type {HTMLElement} */
             this.contentDisplay = document.getElementById('content-display');
+            
+            /** @type {HTMLElement} */
             this.serializedDataDisplay = document.getElementById('serialized-data');
+            
+            /** @type {HTMLElement} */
             this.proofsList = document.getElementById('proofs-list');
-
+            
+            /** @type {any} */
+            this.tableModule = null;
+            
+            /** @type {any} */
+            this.tableToolbar = null;
+        
             // Core components
+            /** @type {Quill|null} */
             this.quill = null;
+            
+            /** @type {EditAnalyzer} */
             this.editAnalyzer = new EditAnalyzer();
+            
+            /** @type {EnhancedMerkleTree|null} */
             this.merkleTree = null; // Will be instantiated after Delta is defined
+            
+            /** @type {Delta|null} */
             this.lastContent = null; // Will be set after initialization
             
             // PoW configuration
+            /** @type {Object} */
             this.powConfig = {
                 min: 1,
                 max: 32,                    // Increased max difficulty
@@ -715,6 +1093,9 @@
             this.initializeWebWorker();
         }
 
+        /**
+         * Initializes the application by setting up the editor, event listeners, and document state.
+         */
         init() {
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => {
@@ -729,31 +1110,81 @@
             }
         }
 
+        /**
+         * Initializes the Quill editor with custom table support and event listeners.
+         */
         initializeQuillEditor() {
             console.log('Initializing Quill editor...');
             try {
+                // Initialize Quill with table support
+                const Block = Quill.import('blots/block');
+                const Container = Quill.import('blots/container');
+                const Table = class extends Container {};
+                const TableRow = class extends Container {};
+                const TableCell = class extends Block {};
+
+                Table.blotName = 'table';
+                Table.tagName = 'TABLE';
+                Table.allowedChildren = ['table-row'];
+
+                TableRow.blotName = 'table-row';
+                TableRow.tagName = 'TR';
+                TableRow.allowedChildren = ['table-cell'];
+
+                TableCell.blotName = 'table-cell';
+                TableCell.tagName = 'TD';
+                TableCell.allowedChildren = [Block, Block.Embed];
+
+                Quill.register(Table);
+                Quill.register(TableRow);
+                Quill.register(TableCell);
+
                 this.quill = new Quill(this.editorContainer, {
                     theme: 'snow',
                     modules: {
-                        toolbar: [
-                            [{ header: [1, 2, 3, false] }],
-                            ['bold', 'italic', 'underline'],
-                            ['link', 'image'],
-                            [{ list: 'ordered' }, { list: 'bullet' }],
-                            ['clean']
-                        ]
+                        toolbar: {
+                            container: [
+                                [{ header: [1, 2, 3, false] }],
+                                ['bold', 'italic', 'underline'],
+                                ['link', 'image'],
+                                [{ list: 'ordered' }, { list: 'bullet' }],
+                                ['clean'],
+                                ['table']
+                            ],
+                            handlers: {
+                                'table': () => {
+                                    console.log('Table button clicked');
+                                    const rows = parseInt(prompt('Number of rows:', '3')) || 3;
+                                    const cols = parseInt(prompt('Number of columns:', '3')) || 3;
+                                    this.insertTable(rows, cols);
+                                }
+                            }
+                        },
+                        keyboard: {
+                            bindings: {
+                                tab: {
+                                    key: 9,
+                                    handler() {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
                     }
                 });
 
-                // Retrieve Quill's Delta class
+                // Add the table button icon after initialization
+                const tableButton = document.querySelector('.ql-table');
+                if (tableButton) {
+                    tableButton.innerHTML = '<svg viewbox="0 0 18 18"><rect class="ql-stroke" height="12" width="12" x="3" y="3"></rect><line class="ql-stroke" x1="3" x2="15" y1="7" y2="7"></line><line class="ql-stroke" x1="3" x2="15" y1="11" y2="11"></line><line class="ql-stroke" x1="7" x2="7" y1="3" y2="15"></line><line class="ql-stroke" x1="11" x2="11" y1="3" y2="15"></line></svg>';
+                }
+
+                // Initialize existing components
                 Delta = Quill.import('delta');
-
-                // Instantiate MerkleTree after Delta is defined
                 this.merkleTree = new EnhancedMerkleTree(Delta);
-
-                // Initialize lastContent
                 this.lastContent = this.quill.getContents();
 
+                // Add event listeners
                 this.quill.on('text-change', (delta, oldDelta, source) => {
                     if (source === 'user') {
                         this.handleEdit(delta, oldDelta);
@@ -767,6 +1198,9 @@
             }
         }
 
+        /**
+         * Attaches event listeners to UI elements for various user interactions.
+         */
         attachEventListeners() {
             this.newDocBtn.addEventListener('click', () => this.newDocument());
             this.verifyBtn.addEventListener('click', () => this.verifyDocument());
@@ -775,7 +1209,95 @@
             this.timestampBtn.addEventListener('click', () => this.manualTimestamp());
             this.fileInput.addEventListener('change', (event) => this.deserializeDocument(event));
         }
+        
+        /**
+         * Inserts a table into the Quill editor at the current selection.
+         * 
+         * @param {number} rows - Number of rows in the table.
+         * @param {number} cols - Number of columns in the table.
+         */
+        insertTable(rows, cols) {
+            console.log('Inserting table:', rows, 'x', cols);
+            const range = this.quill.getSelection(true);
+            if (range) {
+                // Create Delta operations for table
+                let delta = new Delta().retain(range.index);
+                
+                // Start with a newline and table attribute
+                delta = delta.insert('\n', { table: true });
+                
+                // Create rows and cells
+                for (let i = 0; i < rows; i++) {
+                    // For each cell in the row
+                    for (let j = 0; j < cols; j++) {
+                        delta = delta.insert('Cell', { 'table-cell': true });
+                    }
+                    // End row
+                    delta = delta.insert('\n', { 'table-row': true });
+                }
+                
+                // End table with a newline
+                delta = delta.insert('\n');
 
+                // Mark this delta as a table insertion operation
+                delta.ops.forEach(op => {
+                    if (op.insert && !op.attributes) {
+                        op.attributes = {};
+                    }
+                    if (op.attributes) {
+                        op.attributes.isTableOperation = true;
+                    }
+                });
+
+                // Apply the delta operations
+                this.quill.updateContents(delta, 'user');
+                this.quill.setSelection(range.index + 1, 0);
+            }
+        }
+
+        /**
+         * Handles table cell selection within the editor.
+         * 
+         * @param {TableCell} tableCell - The table cell being selected.
+         */
+        handleTableSelection(tableCell) {
+            try {
+                // Get current selection bounds
+                const range = this.quill.getSelection();
+                if (!range) return;
+
+                // Get table information
+                const table = tableCell.parent.parent;
+                const rowIndex = Array.from(table.children).indexOf(tableCell.parent);
+                const cellIndex = Array.from(tableCell.parent.children).indexOf(tableCell);
+
+                // Store table context for potential operations
+                this._tableContext = {
+                    table: table,
+                    cell: tableCell,
+                    row: rowIndex,
+                    column: cellIndex,
+                    range: range
+                };
+
+                // Optional: Update UI to show cell is selected
+                tableCell.domNode.classList.add('selected');
+
+                console.log('Table cell selected:', {
+                    row: rowIndex,
+                    column: cellIndex,
+                    content: tableCell.domNode.textContent
+                });
+            } catch (error) {
+                console.error('Table selection error:', error);
+            }
+        }
+
+        /**
+         * Initializes the document by recording the initial state and performing Proof of Work.
+         * 
+         * @returns {Promise<void>}
+         */
         async initializeDocument() {
             try {
                 const initialDelta = this.quill.getContents();
@@ -809,31 +1331,65 @@
             }
         }
 
+        /**
+         * Handles edits made in the Quill editor, including analysis, Proof of Work, and Merkle tree updates.
+         * 
+         * @param {Delta} delta - The delta representing the edit.
+         * @param {Delta} oldDelta - The delta before the edit.
+         */
         async handleEdit(delta, oldDelta) {
             const currentDelta = this.quill.getContents();
             const timestamp = Date.now();
 
             try {
-                // Analyze edit patterns using delta information
-                const editAnalysis = this.editAnalyzer.recordEdit(delta, this.lastContent, timestamp);
-                
+                // First, check if this is being triggered by insertTable
+                // by looking at the actual delta operations
+                const isTableInsertion = delta.ops.some(op => 
+                    op.attributes && (op.attributes.table || op.attributes['table-row'] || op.attributes['table-cell'])
+                );
+
+                if (isTableInsertion) {
+                    // Skip all analysis and PoW for table insertions
+                    const merkleResult = await this.merkleTree.addLeaf(delta, {
+                        timestamp,
+                        isTableOperation: true
+                    });
+                    this.lastContent = currentDelta;
+                    this.updateUIAfterEdit('Table inserted successfully', 'success');
+                    this.updateDocumentHash(merkleResult.leaf.hash);
+                    this.updateProofsDisplay();
+                    this.updateContentDisplay();
+                    return;
+                }
+
+                // For non-table operations, proceed with normal analysis
+                const editAnalysis = this.editAnalyzer.recordEdit(
+                    delta,
+                    this.lastContent,
+                    timestamp
+                );
+
                 if (!editAnalysis.isValid) {
                     throw new Error(`Suspicious edit pattern: ${editAnalysis.patterns.join(', ')}`);
                 }
 
-                // Perform proof of work on the delta
-                const powResult = await this.performProofOfWork(JSON.stringify(delta), this.powConfig.current);
+                // Perform PoW for non-table edits
+                const powResult = await this.performProofOfWork(
+                    JSON.stringify(delta),
+                    this.powConfig.current
+                );
 
-                // Add delta to Merkle tree with metadata
+                // Add to Merkle tree
                 const merkleResult = await this.merkleTree.addLeaf(delta, {
                     timestamp,
                     editStats: this.editAnalyzer.getEditStats(),
                     powResult: powResult
                 });
 
+                // Update state
                 this.lastContent = currentDelta;
-                
-                // Adjust PoW difficulty
+
+                // Adjust PoW difficulty if needed
                 if (this.editAnalyzer.getEditStats().totalEdits % this.powConfig.adjustmentInterval === 0) {
                     this.adjustPowDifficulty();
                 }
@@ -847,9 +1403,18 @@
             } catch (error) {
                 console.error('Edit processing error:', error);
                 this.updateStatus(error.message, 'error');
+                
+                // Attempt to restore previous state if possible
+                if (oldDelta) {
+                    this.quill.setContents(oldDelta, 'silent');
+                    this.lastContent = oldDelta;
+                }
             }
         }
 
+        /**
+         * Initializes the Web Worker for performing Proof of Work operations.
+         */
         initializeWebWorker() {
             const workerScript = `
                 self.addEventListener('message', async (event) => {
@@ -857,7 +1422,7 @@
                     const startTime = Date.now(); // Record start time
                     let nonce = 0;
                     const target = '0'.repeat(difficulty);
-
+    
                     while (true) {
                         const combined = \`\${content}\${nonce}\`;
                         const encoder = new TextEncoder();
@@ -865,7 +1430,7 @@
                         const hashBuffer = await crypto.subtle.digest('SHA-256', data);
                         const hashArray = Array.from(new Uint8Array(hashBuffer));
                         const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-
+    
                         if (hashHex.startsWith(target)) {
                             const duration = Date.now() - startTime; // Calculate duration
                             self.postMessage({ 
@@ -876,13 +1441,13 @@
                             });
                             break;
                         }
-
+    
                         nonce++;
-
+    
                         if (nonce % 1000 === 0) {
                             await new Promise(resolve => setTimeout(resolve, 0));
                         }
-
+    
                         if (nonce === Number.MAX_SAFE_INTEGER) {
                             self.postMessage({ 
                                 type: 'POW_ERROR', 
@@ -899,6 +1464,13 @@
             this.worker = new Worker(workerUrl);
         }
 
+        /**
+         * Performs Proof of Work by delegating to the Web Worker.
+         * 
+         * @param {string} content - The content to perform PoW on.
+         * @param {number} difficulty - The difficulty level for PoW.
+         * @returns {Promise<Object>} - The PoW result containing nonce, hash, and duration.
+         */
         async performProofOfWork(content, difficulty) {
             return new Promise((resolve, reject) => {
                 this.worker.onmessage = (event) => {
@@ -917,6 +1489,9 @@
             });
         }
 
+        /**
+         * Adjusts the Proof of Work difficulty based on recent typing speed statistics.
+         */
         adjustPowDifficulty() {
             const stats = this.editAnalyzer.getEditStats();
             if (!stats || stats.totalEdits % this.powConfig.adjustmentInterval !== 0) {
@@ -966,6 +1541,11 @@
             }
         }
 
+        /**
+         * Manually creates a timestamp for the current document content.
+         * 
+         * @returns {Promise<void>}
+         */
         async manualTimestamp() {
             const currentContent = this.merkleTree.getCurrentContent();
             const contentHash = await this.merkleTree.computeHash(JSON.stringify(currentContent));
@@ -981,6 +1561,11 @@
             }
         }
 
+        /**
+         * Creates a new document, resetting the editor and related components.
+         * 
+         * @returns {Promise<void>}
+         */
         async newDocument() {
             this.quill.setText('');
             this.merkleTree = new EnhancedMerkleTree(Delta);
@@ -995,24 +1580,63 @@
             this.updateContentDisplay();
         }
 
+        /**
+         * Serializes the current document state into a downloadable file.
+         * Attempts compression; falls back to uncompressed if compression fails.
+         * 
+         * @returns {Promise<void>}
+         */
         async serializeDocument() {
             try {
                 this.disableUI();
                 this.updateStatus('Serializing document...', 'info');
                 this.spinner.style.display = 'inline-block';
 
+                // Get the uncompressed JSON first
                 const serialized = await this.merkleTree.serialize();
-                const blob = new Blob([serialized], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
+                const jsonBytes = new TextEncoder().encode(serialized);
                 
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `bitquill_document_${Date.now()}.json`;
-                a.click();
-                URL.revokeObjectURL(url);
+                try {
+                    // Create compression stream and get transformed stream
+                    const compressedStream = new Blob([jsonBytes])
+                        .stream()
+                        .pipeThrough(new CompressionStream('gzip'));
 
-                this.serializedDataDisplay.textContent = serialized;
-                this.updateStatus('Document serialized successfully', 'success');
+                    // Convert compressed stream to blob
+                    const compressedBlob = await new Response(compressedStream).blob();
+                    const compressedData = new Uint8Array(await compressedBlob.arrayBuffer());
+
+                    // Create blob and download
+                    const blob = new Blob([compressedData], { type: 'application/x-bqlz' });
+                    const url = URL.createObjectURL(blob);
+                    
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `bitquill_document_${Date.now()}.bqlz`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+
+                    // Show original JSON in display for debugging
+                    this.serializedDataDisplay.textContent = serialized;
+                    
+                    // Log compression stats
+                    const compressionRatio = (compressedData.length / jsonBytes.length * 100).toFixed(2);
+                    this.updateStatus(`Document serialized successfully (${compressionRatio}% of original size)`, 'success');
+                } catch (error) {
+                    console.error('Compression error:', error);
+                    // Fallback to uncompressed if compression fails
+                    const blob = new Blob([serialized], { type: 'application/x-bql' });
+                    const url = URL.createObjectURL(blob);
+                    
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `bitquill_document_${Date.now()}.bql`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+
+                    this.serializedDataDisplay.textContent = serialized;
+                    this.updateStatus('Document serialized successfully (uncompressed)', 'success');
+                }
             } catch (error) {
                 console.error('Serialization error:', error);
                 this.updateStatus(`Serialization failed: ${error.message}`, 'error');
@@ -1022,6 +1646,12 @@
             }
         }
 
+        /**
+         * Deserializes a document from a selected file and reconstructs the Merkle Tree.
+         * 
+         * @param {Event} event - The file input change event.
+         * @returns {Promise<void>}
+         */
         async deserializeDocument(event) {
             const file = event.target.files[0];
             if (!file) {
@@ -1034,7 +1664,20 @@
                 this.updateStatus('Deserializing document...', 'info');
                 this.spinner.style.display = 'inline-block';
 
-                const content = await file.text();
+                let content;
+                if (file.type === 'application/x-bqlz' || file.name.endsWith('.bqlz')) {
+                    // Handle compressed file
+                    const compressedStream = file.stream()
+                        .pipeThrough(new DecompressionStream('gzip'));
+                        
+                    // Convert decompressed stream to text
+                    const decompressedBlob = await new Response(compressedStream).blob();
+                    content = await decompressedBlob.text();
+                } else {
+                    // Handle uncompressed file
+                    content = await file.text();
+                }
+
                 const success = await this.merkleTree.deserialize(content);
                 
                 if (success) {
@@ -1048,7 +1691,7 @@
                     this.updateStatus('Document deserialized successfully', 'success');
                     this.updateUIAfterEdit('Document loaded', 'success');
 
-                    // **Update the UI sections**
+                    // Update the UI sections
                     this.updateProofsDisplay();
                     this.updateContentDisplay();
                 } else {
@@ -1064,6 +1707,11 @@
             }
         }
 
+        /**
+         * Verifies the integrity of the entire document by validating each edit's Merkle proof.
+         * 
+         * @returns {Promise<void>}
+         */
         async verifyDocument() {
             try {
                 this.disableUI();
@@ -1108,19 +1756,39 @@
             }
         }
 
+        /**
+         * Updates the UI after an edit with a status message.
+         * 
+         * @param {string} message - The status message.
+         * @param {string} type - The type of status (e.g., 'success', 'error', 'info').
+         */
         updateUIAfterEdit(message, type) {
             this.updateStatus(message, type);
         }
 
+        /**
+         * Updates the status display with a message and type.
+         * 
+         * @param {string} message - The message to display.
+         * @param {string} type - The type of message ('success', 'error', 'info').
+         */
         updateStatus(message, type) {
             this.statusDisplay.textContent = message;
             this.statusDisplay.className = `status ${type}`;
         }
 
+        /**
+         * Updates the display showing the current document hash.
+         * 
+         * @param {string} hash - The document's current root hash.
+         */
         updateDocumentHash(hash) {
             this.documentHashDisplay.textContent = hash || 'No hash yet...';
         }
 
+        /**
+         * Updates the proofs display section with all Merkle proofs.
+         */
         updateProofsDisplay() {
             const history = this.merkleTree.getHistory();
             this.proofsList.innerHTML = history.map((entry, index) => `
@@ -1142,10 +1810,16 @@
             `).join('');
         }
 
+        /**
+         * Updates the content display with the current document state.
+         */
         updateContentDisplay() {
             this.merkleTree.updateContentDisplay(this.contentDisplay);
         }
 
+        /**
+         * Disables UI buttons to prevent user interaction during processing.
+         */
         disableUI() {
             this.verifyBtn.disabled = true;
             this.serializeBtn.disabled = true;
@@ -1154,6 +1828,9 @@
             this.newDocBtn.disabled = true;
         }
 
+        /**
+         * Enables UI buttons after processing is complete.
+         */
         enableUI() {
             this.verifyBtn.disabled = false;
             this.serializeBtn.disabled = false;
@@ -1163,7 +1840,9 @@
         }
     }
 
-    // Initialize the BitQuill application
+    /**
+     * Initializes the BitQuill application once the DOM is fully loaded.
+     */
     document.addEventListener('DOMContentLoaded', () => {
         console.log('Initializing BitQuill...');
         try {
@@ -1177,7 +1856,8 @@
             document.getElementById('status').className = 'status error';
         }
     });
-    </script>
+</script>
+
 
 </body>
 </html>
