@@ -1,0 +1,9 @@
+/target
+/static
+/src-tauri
+/pkg
+/dist
+.git
+Cargo.lock
+command.sh
+bitquill_combined.txt

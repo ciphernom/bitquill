@@ -1,0 +1,21 @@
+# wasm-pack.toml
+[package]
+name = "bitquill-wasm"
+version = "0.1.0"
+description = "BitQuill core functionality in WASM"
+repository = "https://github.com/staterootchain/bitquill/"
+license = "GPL-3.0-or-later"
+
+[build]
+target = "web"
+release = true
+out-dir = "./pkg"
+
+[features]
+default = ["console_error_panic_hook"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = 'abort'
