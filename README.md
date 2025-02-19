@@ -1,42 +1,79 @@
 # BitQuill - Digital Observer Protocol Editor
 
-## Purpose
-BitQuill is a specialized text editor designed to provide writers with cryptographic proof of their writing process and effort. In an era where AI-generated content is becoming increasingly prevalent, BitQuill enables authors to demonstrate their authentic human writing process through a combination of technical measures.
+## What is BitQuill?
+BitQuill acts as a digital observer that watches over your shoulder as you write, creating cryptographic proof of your writing process. Just as a trusted human observer could verify they watched you write something word by word, making natural pauses and corrections, BitQuill creates technical evidence of your authentic writing process.
+
+## Getting Started
+
+### Quick Start (Using Pre-built Distribution)
+1. Visit https://github.com/ciphernom/bitquill/
+2. Download the latest release from the dist/ directory
+3. Serve the directory using a local web server. For example:
+   ```bash
+   # Using Python 3
+   python -m http.server --directory dist/
+
+   # Or using Node.js
+   npx serve dist/
+
+   # Or using PHP
+   php -S localhost:8000 -t dist/
+   ```
+4. Open your browser and navigate to `http://localhost:8000` (or whatever port your server uses)
+
+### Building from Source
+Prerequisites:
+- Rust and Cargo (https://rustup.rs/)
+- Node.js and npm (https://nodejs.org/)
+- wasm-pack (`cargo install wasm-pack`)
+
+Building:
+```bash
+# Clone the repository
+git clone https://github.com/ciphernom/bitquill/
+cd bitquill
+
+# Install dependencies
+npm install
+
+# Build the project
+wasm-pack build
+npm run build
+
+# Serve the dist directory:
+npm run serve   # This will start a server on http://localhost:8080
+
+# Or use any other web server of your choice:
+python -m http.server --directory dist/
+npx serve dist/
+php -S localhost:8000 -t dist/
+```
 
 ## The Problem
-With the rise of AI content generation, there's a growing challenge in distinguishing between human-written and machine-generated content. Traditional timestamping or version control systems only show when content was saved, not how it was created. This makes it difficult for human authors to prove their creative process and effort.
+In an era of AI-generated content, there's no reliable way to prove that a human actually wrote something. While traditional timestamps can show when a document was saved, they can't prove how it was written. It's like having a security camera that only takes a photo every hour instead of recording continuous footage.
 
 ## How BitQuill Solves It
-BitQuill creates a verifiable record of the writing process by:
+BitQuill acts as a continuous observer of your writing process, creating verifiable proof that a human sat down and wrote the content keystroke by keystroke. Like a trusted witness watching over your shoulder, it:
 
-1. **Delta-Based Recording**: Captures every keystroke, edit, and pause in the writing process, preserving the natural rhythm and flow of human writing.
+1. **Observes Every Keystroke**: Records each character typed, backspace pressed, and pause taken, just as a human observer would see.
 
-2. **Merkle Tree Implementation**: Creates a cryptographic chain of evidence for the entire writing session, making it impossible to retroactively alter the writing history.
+2. **Creates Tamper-Proof Evidence**: Uses Merkle trees to create an unalterable chain of evidence of your writing process, like a witness taking detailed notes that can't be modified later.
 
-3. **Edit Pattern Analysis**: Monitors typing patterns, pauses, and corrections that are characteristic of human writing behavior.
+3. **Verifies Human Patterns**: Analyzes typing rhythms, pauses, and corrections that are characteristic of human writing, similar to how an observer would notice natural writing behavior.
 
-4. **Proof of Work**: Implements a dynamic difficulty system that requires computational work for each edit, preventing rapid automated content generation.
+4. **Prevents Automated Writing**: Uses proof-of-work to ensure content couldn't have been generated instantly, just as a human observer would know if you suddenly pasted in pre-written text.
 
-5. **Timestamping**: Integrates with the OpenTimestamps protocol to provide blockchain-anchored proof of when content was written.
+5. **Timestamps Key Moments**: Regularly anchors the writing session to blockchain timestamps, like having the observer periodically sign and date their notes.
 
 ## Key Features
-
-- **Real-time Verification**: Continuously validates the authenticity of the writing process
-- **Formatting Preservation**: Maintains rich text formatting while ensuring cryptographic integrity
-- **Export Capabilities**: Allows authors to save and share their work with complete proof of authorship
-- **Tamper-Evident**: Any attempt to modify the writing history will be detected
-- **Privacy-Focused**: All verification happens locally; no content needs to be uploaded
-
-## Benefits
-
-- **For Authors**: Provide credible proof of their writing effort and process
-- **For Publishers**: Verify the authenticity of submitted content
-- **For Readers**: Trust that content was genuinely human-written
-- **For Platforms**: Implement verifiable standards for human-generated content
+- **Continuous Observation**: Monitors and validates the writing process in real-time
+- **Formatting Preservation**: Keeps track of styling and formatting changes as part of the proof
+- **Verifiable Export**: Allows you to share your work with proof of how it was written
+- **Tamper-Evident**: Any attempt to modify the writing history is detectable
+- **Privacy-Focused**: Like a confidential observer, verifies your process without revealing your content
 
 ## Technical Implementation
-
-BitQuill uses a combination of:
+BitQuill implements its digital observer using:
 - WebAssembly for high-performance cryptographic operations
 - Quill.js for rich text editing capabilities
 - SHA-256 for hash generation
@@ -44,11 +81,10 @@ BitQuill uses a combination of:
 - OpenTimestamps for blockchain anchoring
 - Edit pattern analysis for human behavior verification
 
-## BUGS!
-- formatting doesn't show up in the editor. It does get saved in the serialisation but it just doesn't appear in the editor. Im working on a solution to this.
+## Known Issues
+- Formatting doesn't show up in the editor. It does get saved in the serialization but it just doesn't appear in the editor. A solution is being worked on.
 
 ## Future Applications
-
 - Academic integrity verification
 - Professional writing portfolios
 - Content marketplace verification
@@ -62,5 +98,6 @@ GPL-3.0-or-later
 We welcome contributions that enhance the protocol's ability to verify human authorship while maintaining usability for writers.
 
 ---
+BitQuill serves as your trusted digital observer, creating indisputable proof that you genuinely wrote your content, one keystroke at a time.
 
-BitQuill represents a step toward preserving the value and verifiability of human creative effort in an age of automated content generation. By providing cryptographic proof of the writing process, it helps authors demonstrate their authentic contribution to the written word.
+# DISCLOSURE: THIS README WAS GENERATED BY AN LLM UNDER INSTRUCTION
