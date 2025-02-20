@@ -2,7 +2,6 @@
 /static
 /src-tauri
 /pkg
-/dist
 .git
 Cargo.lock
 command.sh
